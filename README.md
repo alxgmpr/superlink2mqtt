@@ -18,6 +18,25 @@ documentation; packet sniffing also works standalone on a Heltec v3.
 
 <img width="1028" height="781" alt="image" src="https://github.com/user-attachments/assets/e16ffbb9-7369-461f-b2e1-0df24a7cf506" />
 
+## Bridge installation
+
+Requires Python 3.12+, libsodium, and a configured SX1302 HAL on the Pi.
+From a clone of this repository:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install '.[mqtt]'
+cp tools/sx1302/superlink_bridge.yaml.example superlink_bridge.yaml
+# Edit gateway identity, allowed sensors, store path, and MQTT broker.
+superlink-bridged --config superlink_bridge.yaml
+```
+
+For the existing Pi HAL checkout, `tools/sx1302/setup_rpi.sh` installs the
+bridge and MQTT dependencies into `~/superlink-venv` and builds the HAL.
+The HAL checkout must already exist at `~/sx1302_hal`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the test environment.
+
 ## What is SuperLink?
 
 SuperLink is Ubiquiti's proprietary long-range wireless protocol used in UniFi Access, UniFi Connect, UniFi SmartPower, and gateway products. It uses standard Semtech LoRa chirp spread spectrum modulation but a completely proprietary MAC layer with custom framing, encryption, and device management. It is not LoRaWAN.

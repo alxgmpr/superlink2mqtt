@@ -1,5 +1,24 @@
 # Contributing to superlink2mqtt
 
+## Development setup
+
+Use Python 3.12 or newer (CI tests 3.12, 3.13, and 3.14). Install libsodium
+first: `sudo apt-get install libsodium-dev` on Debian/Raspberry Pi OS, or
+`brew install libsodium` on macOS.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[mqtt,test]'
+python -m pytest
+```
+
+The `mqtt` extra installs paho-mqtt; the `test` extra includes the historical
+mock-controller test dependencies. PlatformIO and other RE utilities remain
+separate from the bridge runtime. Install Mosquitto (`apt-get install mosquitto`
+or `brew install mosquitto`) to run local broker integration tests; they use a
+private loopback listener and temporary storage, not your configured broker.
+
 ## How You Can Help
 
 ### No Hardware Needed
