@@ -9,36 +9,6 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  bridge-tests:
-    name: Bridge tests (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.12", "3.13", "3.14"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsodium-dev mosquitto
-      - name: Install bridge and test dependencies
-        run: python -m pip install '.[mqtt,test]'
-      - name: Test
-        env:
-          HYPOTHESIS_PROFILE: ci
-        run: python -m pytest
-      - name: Verify installed package outside checkout
-        working-directory: /tmp
-        run: |
-          python -c 'from superlink.bridge.profiles import ProfileRegistry; ProfileRegistry.load()'
-          superlink-bridged --help
-          superlink-gw --help
-          superlink-sniff --help
-
   sniffer-build:
     name: Build sniffer firmware
     runs-on: ubuntu-latest
@@ -89,3 +59,33 @@ jobs:
       - uses: DavidAnson/markdownlint-cli2-action@v16
         with:
           globs: "docs/**/*.md *.md"
+
+  bridge-tests:
+    name: Bridge tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev mosquitto
+      - name: Install bridge and test dependencies
+        run: python -m pip install '.[mqtt,test]'
+      - name: Test
+        env:
+          HYPOTHESIS_PROFILE: ci
+        run: python -m pytest
+      - name: Verify installed package outside checkout
+        working-directory: /tmp
+        run: |
+          python -c 'from superlink.bridge.profiles import ProfileRegistry; ProfileRegistry.load()'
+          superlink-bridged --help
+          superlink-gw --help
+          superlink-sniff --help
