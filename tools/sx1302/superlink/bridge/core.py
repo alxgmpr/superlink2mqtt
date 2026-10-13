@@ -33,6 +33,10 @@ class SessionProtocol(Protocol):
     def queue_body(self, body: bytes) -> None: ...
 
 
+class InvalidCommand(ValueError):
+    """An operator action cannot be encoded for the sensor."""
+
+
 class BridgeCore:
     def __init__(self, store: DeviceStore, profiles: ProfileRegistry,
                  session_factory: Callable[[DeviceRecord], SessionProtocol],
@@ -175,9 +179,13 @@ class BridgeCore:
         session = self._sessions.get(action.mac)
         if session is None:
             return
-        self._cmd_tag = (self._cmd_tag % 0xFF) + 1  # 1..255, never 0
-        session.queue_body(
-            action_to_body(action, self.profiles, tag=self._cmd_tag))
+        tag = (self._cmd_tag % 0xFF) + 1  # 1..255, never 0
+        try:
+            body = action_to_body(action, self.profiles, tag=tag)
+        except (KeyError, ValueError, TypeError, PermissionError, OverflowError) as exc:
+            raise InvalidCommand(str(exc)) from exc
+        self._cmd_tag = tag
+        session.queue_body(body)
         # The tag space is shared across all devices and wraps at 255, so a
         # stale pending-reset tag could otherwise be "confirmed" by an
         # unrelated later command that happens to land on the same tag. Only

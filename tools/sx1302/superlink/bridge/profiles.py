@@ -121,6 +121,8 @@ class ProfileRegistry:
             raise PermissionError(f"property {entry['name']} is read-only")
         t = entry["type"]
         if t == "bool":
+            if not isinstance(value, (bool, int)) or value not in (0, 1):
+                raise ValueError(f"{entry['name']} requires ON/OFF or 1/0")
             return pid, b"\x01" if value else b"\x00"
         size, signed = _INT_TYPES[t]
         n = round(value / entry["scale"]) if "scale" in entry else int(value)

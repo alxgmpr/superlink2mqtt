@@ -3,6 +3,7 @@
 from __future__ import annotations
 import json
 import logging
+import re
 
 from .config import MqttConfig
 from .entities import (
@@ -178,36 +179,55 @@ class MqttBridge:
 
     # --- inbound: MQTT -> actions ---
     def _paho_on_message(self, client, userdata, msg):
-        payload = msg.payload.decode() if isinstance(msg.payload, bytes) else msg.payload
-        log.info("MQTT RX %s = %r", msg.topic, payload)
+        # A retained reset/reboot must never execute again on resubscription.
+        if msg.retain:
+            log.warning("ignoring retained command on %s", msg.topic)
+            return
+        try:
+            payload = msg.payload.decode("utf-8")
+        except UnicodeDecodeError:
+            log.warning("ignoring non-UTF-8 command on %s", msg.topic)
+            return
+        log.info("MQTT RX %s", msg.topic)
         self._on_message(msg.topic, payload)
 
     def _on_message(self, topic: str, payload: str) -> None:
-        parts = topic.split("/")
+        if not topic.startswith(f"{self.base}/"):
+            return
+        parts = topic[len(self.base) + 1:].split("/")
         if topic == f"{self.base}/adopt":
             try:
-                mac = bytes.fromhex(payload.strip())
+                mac = _parse_mac(payload.strip())
             except ValueError:
                 log.warning("bad adopt payload: %r", payload)
                 return
             self.runtime.submit_action(AdoptDevice(mac=mac))
             return
         # <base>/<machex>/<name>/{set,press}
-        if len(parts) == 4 and parts[0] == self.base:
+        if len(parts) == 3:
             try:
-                mac = bytes.fromhex(parts[1])
+                mac = _parse_mac(parts[0])
             except ValueError:
                 return
-            name, action = parts[2], parts[3]
+            name, action = parts[1], parts[2]
             if action == "set":
                 self.runtime.submit_action(SetProperty(
                     mac=mac, name_or_id=name, value=_parse_value(payload)))
             elif action == "press":
+                if payload.strip() != "PRESS":
+                    log.warning("ignoring invalid button payload on %s", topic)
+                    return
                 factory = _BUTTON_ACTIONS.get(name)
                 if factory is None:
                     log.warning("unknown button %r", name)
                     return
                 self.runtime.submit_action(factory(mac))
+
+
+def _parse_mac(value: str) -> bytes:
+    if not re.fullmatch(r"[0-9a-fA-F]{12}", value):
+        raise ValueError("expected a 12-digit sensor MAC")
+    return bytes.fromhex(value)
 
 
 def _parse_value(payload: str):

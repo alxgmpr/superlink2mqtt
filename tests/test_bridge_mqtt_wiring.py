@@ -1,3 +1,6 @@
+import pytest
+from types import SimpleNamespace
+
 from superlink.bridge.config import RuntimeConfig, MqttConfig, ADOPT_ALL, DEFAULT_PAIRING_KEY
 from superlink.bridge.runtime import BridgeRuntime, start_mqtt_if_configured
 from superlink.bridge.store import InMemoryDeviceStore, DeviceRecord
@@ -112,3 +115,36 @@ def test_factory_reset_prunes_runtime_sessions_and_retracts_signal():
     assert bridge._retained.get(MAC, set()) == set()
     assert _retracted(client, f"homeassistant/sensor/{MH}_SIGNAL/config")
     assert _retracted(client, f"superlink/{MH}/SIGNAL")
+
+
+@pytest.mark.parametrize('name,value', [
+    ('NOT_A_PROPERTY', '1'), ('BATTERY', '50'),
+    ('REPORT_INTERVAL', 'not a number'), ('REPORT_INTERVAL', '-1'),
+    ('REPORT_INTERVAL', '65536'), ('REPORT_INTERVAL', 'nan'),
+    ('LED_ENABLED', 'nonsense'),
+])
+def test_invalid_mqtt_command_does_not_stop_radio_or_next_command(name, value):
+    cfg, rt = _rt(MqttConfig(host='fake'))
+    rt.core._adopt(MAC)
+    client = FakeMqttClient()
+    bridge = MqttBridge(cfg.mqtt, rt, client)
+    bridge._on_message(f'superlink/{MH}/{name}/set', value)
+    bridge._on_message(f'superlink/{MH}/LED_ENABLED/set', 'ON')
+    rt.poll_once(1.0)
+    # Only the valid action is queued, and rejected input consumes no tag.
+    assert rt._sessions[MAC]._pending_bodies == [bytes.fromhex('0e010e0001')]
+
+
+@pytest.mark.parametrize('topic,payload,retained', [
+    (f'superlink/{MH}/LED_ENABLED/set', b'\xff', False),
+    ('superlink/abcd/locate/press', b'PRESS', False),
+    ('superlink/adopt', b'abcd', False),
+    (f'superlink/{MH}/factory_reset/press', b'anything', False),
+    (f'superlink/{MH}/factory_reset/press', b'PRESS', True),
+])
+def test_invalid_or_retained_mqtt_message_is_not_queued(topic, payload, retained):
+    cfg, rt = _rt(MqttConfig(host='fake'))
+    bridge = MqttBridge(cfg.mqtt, rt, FakeMqttClient())
+    bridge._paho_on_message(None, None, SimpleNamespace(
+        topic=topic, payload=payload, retain=retained))
+    assert rt._action_queue.empty()
