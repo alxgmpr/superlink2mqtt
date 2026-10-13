@@ -3,7 +3,9 @@ from __future__ import annotations
 import csv
 import logging
 import queue
+import signal
 import time
+from concurrent.futures import Future
 from typing import Callable
 
 from ..hal import BW_500KHZ
@@ -32,6 +34,9 @@ class BridgeRuntime:
         self._csv_writer = None
         self._csv_file = None
         self._action_queue: queue.Queue = queue.Queue()
+        self._management_queue: queue.Queue = queue.Queue(maxsize=32)
+        self.mqtt_bridge = None
+        self.demo = False
         self._tick_interval = 1.0
         self._last_tick = 0.0
         self.core = BridgeCore(self.store, self.profiles, self._session_factory,
@@ -129,6 +134,25 @@ class BridgeRuntime:
         """Thread-safe: enqueue an action to be applied on the poll-loop thread."""
         self._action_queue.put(action)
 
+    def submit_management(self, operation) -> Future:
+        future = Future()
+        self._management_queue.put_nowait((future, operation))
+        return future
+
+    def _drain_management(self) -> None:
+        # Bound work per iteration so a busy UI cannot starve radio polling.
+        for _ in range(4):
+            try:
+                future, operation = self._management_queue.get_nowait()
+            except queue.Empty:
+                break
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                future.set_result(operation())
+            except Exception as exc:
+                future.set_exception(exc)
+
     def default_mac(self) -> bytes | None:
         """The MAC a control command targets when none is given.
 
@@ -153,6 +177,7 @@ class BridgeRuntime:
             self.core.submit(action)
 
     def poll_once(self, now: float) -> None:
+        self._drain_management()
         self._drain_actions()
         for pkt in self.hal.receive():
             if not pkt.crc_ok:
@@ -244,16 +269,33 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="SuperLink bridge runtime daemon")
     parser.add_argument("--config", default="superlink_bridge.yaml",
                         help="path to YAML config")
+    parser.add_argument("--demo", action="store_true", help="local UI demo; no radio or MQTT")
     args = parser.parse_args(argv)
+    if args.demo:
+        from .web import run_demo
+        run_demo()
+        return
     config = RuntimeConfig.load(args.config)
     logging.basicConfig(level=getattr(logging, config.log_level, logging.INFO))
-    runtime = build_runtime(config, SX1302())
-    control = start_control_socket_if_configured(runtime, config)
-    mqtt_bridge = start_mqtt_if_configured(runtime, config)
+    runtime = build_runtime(config, SX1302(lib_path=config.hal_library,
+                                         spi_path=config.spi_path.encode(),
+                                         reset_script=config.reset_script))
+    previous_sigterm = signal.signal(signal.SIGTERM, lambda *_: runtime.stop())
+    control = mqtt_bridge = web = None
     try:
+        control = start_control_socket_if_configured(runtime, config)
+        mqtt_bridge = start_mqtt_if_configured(runtime, config)
+        runtime.mqtt_bridge = mqtt_bridge
+        if config.web is not None:
+            from .web import ManagementServer
+            web = ManagementServer(runtime, config.web)
+            web.start()
         runtime.run()
     finally:
+        if web is not None:
+            web.stop()
         if mqtt_bridge is not None:
             mqtt_bridge.stop()
         if control is not None:
             control.stop()
+        signal.signal(signal.SIGTERM, previous_sigterm)

@@ -164,6 +164,9 @@ class DeviceSession:
         # any 32-bit value works as long as the same one is used for the life
         # of this session against this sensor.
         self.network_id = network_id
+        self.name = record.name if record is not None else None
+        if record is not None and record.network_id is not None:
+            self.network_id = record.network_id
 
         self._state = State.IDLE
         self.session_key: bytes | None = None
@@ -418,6 +421,8 @@ class DeviceSession:
             tx_seq_lo=self._tx_seq_lo,
             ul_counter_offset=self._ul_counter_offset,
             prop_sizes=self._prop_sizes,
+            name=self.name,
+            network_id=self.network_id,
         )
 
     # -------------------------------------------------------------- dispatch

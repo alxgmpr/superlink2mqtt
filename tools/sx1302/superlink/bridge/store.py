@@ -3,6 +3,8 @@ from __future__ import annotations
 import abc
 import json
 import os
+import tempfile
+import uuid
 from dataclasses import dataclass, asdict, fields
 
 
@@ -23,6 +25,8 @@ class DeviceRecord:
     # bridge restart keeps decoding PROPERTY_REPORTs into typed events without
     # having to re-request device info on the next reconnect.
     prop_sizes: dict | None = None
+    name: str | None = None
+    network_id: int | None = None
 
 
 _BYTES_FIELDS = ("mac", "primary_key", "fallback_key", "kdf_context", "transport_key")
@@ -56,6 +60,10 @@ class DeviceStore(abc.ABC):
     @abc.abstractmethod
     def delete(self, mac: bytes) -> None: ...
 
+    def import_records(self, records: list[DeviceRecord]) -> None:
+        """Atomically insert new devices, refusing existing identities."""
+        raise NotImplementedError("This device store does not support imports")
+
 
 class InMemoryDeviceStore(DeviceStore):
     def __init__(self):
@@ -70,6 +78,16 @@ class InMemoryDeviceStore(DeviceStore):
     def delete(self, mac: bytes) -> None:
         self._records.pop(mac, None)
 
+    def import_records(self, records: list[DeviceRecord]) -> None:
+        _check_new(records, self._records)
+        self._records.update({r.mac: r for r in records})
+
+
+def _check_new(records, existing):
+    macs = [r.mac for r in records]
+    if len(macs) != len(set(macs)) or any(mac in existing for mac in macs):
+        raise ValueError("Import contains duplicate or existing devices")
+
 
 class JsonDeviceStore(DeviceStore):
     def __init__(self, path: str):
@@ -82,8 +100,26 @@ class JsonDeviceStore(DeviceStore):
             return json.load(f)
 
     def _write(self, data: dict[str, dict]) -> None:
-        with open(self.path, "w") as f:
-            json.dump(data, f, indent=2)
+        self._atomic_write(self.path, data)
+
+    @staticmethod
+    def _atomic_write(path, data):
+        directory = os.path.dirname(os.path.abspath(path))
+        fd, temporary = tempfile.mkstemp(prefix=".superlink-", dir=directory)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, path)
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     def load_all(self) -> list[DeviceRecord]:
         return [_from_json(v) for v in self._read().values()]
@@ -96,4 +132,12 @@ class JsonDeviceStore(DeviceStore):
     def delete(self, mac: bytes) -> None:
         data = self._read()
         data.pop(mac.hex(), None)
+        self._write(data)
+
+    def import_records(self, records: list[DeviceRecord]) -> None:
+        data = self._read()
+        _check_new(records, {bytes.fromhex(mac) for mac in data})
+        if os.path.exists(self.path):
+            self._atomic_write(f"{self.path}.backup-{uuid.uuid4().hex}", data)
+        data.update({r.mac.hex(): _to_json(r) for r in records})
         self._write(data)

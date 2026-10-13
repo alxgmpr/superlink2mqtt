@@ -1,0 +1,10 @@
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!tools/
+!tools/sx1302/
+!tools/sx1302/superlink/
+!tools/sx1302/superlink/**
+**/__pycache__/
+**/*.pyc

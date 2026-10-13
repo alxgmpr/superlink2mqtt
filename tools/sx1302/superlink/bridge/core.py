@@ -66,6 +66,18 @@ class BridgeCore:
     def subscribe(self, cb: Callable[[Event], None]) -> None:
         self._subscribers.append(cb)
 
+    def import_devices(self, records: list[DeviceRecord]) -> None:
+        """Called only by the runtime owner, never by an HTTP worker."""
+        if any(r.mac in self._sessions for r in records):
+            raise ValueError("A device already has a session; existing devices cannot be overwritten")
+        self.store.import_records(records)
+        for record in records:
+            self._discovered.pop(record.mac, None)
+            self._sessions[record.mac] = self._factory(record)
+
+    def has_session(self, mac: bytes) -> bool:
+        return mac in self._sessions
+
     def _emit(self, events) -> None:
         for ev in events:
             for cb in self._subscribers:

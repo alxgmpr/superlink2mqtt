@@ -11,6 +11,13 @@ presses) plus command buttons (locate, reboot, refresh, clear tamper). See
 **[docs/OPEN_GATEWAY_PLAN.md](docs/OPEN_GATEWAY_PLAN.md)** for current state and
 open work.
 
+The bridge now includes a local **management UI and persistent-key importer**.
+Install with `python -m pip install .`, then run `superlink-bridged --demo` to
+preview it without hardware. See [management setup and migration](docs/MANAGEMENT_UI.md)
+for installation, token configuration, supported import formats and current
+limitations. Automatic UniFi key extraction and a Ubiquiti gateway backend are
+not yet included.
+
 The protocol underneath is Ubiquiti's proprietary SuperLink — a LoRa-based
 sub-GHz radio system on 915 MHz (US ISM band), reverse engineered from firmware
 and over-the-air captures. The rest of this README is that protocol
@@ -21,7 +28,6 @@ documentation; packet sniffing also works standalone on a Heltec v3.
 ## What is SuperLink?
 
 SuperLink is Ubiquiti's proprietary long-range wireless protocol used in UniFi Access, UniFi Connect, UniFi SmartPower, and gateway products. It uses standard Semtech LoRa chirp spread spectrum modulation but a completely proprietary MAC layer with custom framing, encryption, and device management. It is not LoRaWAN.
-
 
 ## Hardware
 
@@ -50,7 +56,7 @@ Beacon channel: 927.6 MHz
 
 ## Frame Format
 
-```
+```text
 Offset  Size  Field
 ------  ----  -----
 0       10    Cleartext header (always unencrypted)
@@ -59,7 +65,8 @@ Offset  Size  Field
 ```
 
 Cleartext header (10 bytes):
-```
+
+```text
 Offset  Size  Field
 ------  ----  -----
 0       1     Mctrl (management/message control)
@@ -70,6 +77,7 @@ Offset  Size  Field
 ```
 
 Observed frame types by Dctrl:
+
 - 0x54: standard UL data (19 bytes total: 10 header + 4 MIC + 5 payload)
 - 0x44: variant UL data (20 bytes total: 10 header + 4 MIC + 6 payload)
 - 0x63: standard DL response (16 bytes total: 10 header + 4 MIC + 2 payload)
@@ -113,7 +121,8 @@ The end-to-end adoption/commit mechanism is documented in
 ## Decrypted Payload (USL-Entry door sensor)
 
 Standard 5-byte UL payload:
-```
+
+```text
 Byte 0: 0x0C  type (sensor report)
 Byte 1: 0x00  flags
 Byte 2: 0x0F  command (door state)
@@ -154,7 +163,7 @@ sweep harnesses for tuning DL responses.
 
 ## Repository Structure
 
-```
+```text
 superlink2mqtt/
 ├── docs/protocol/          — frame format, crypto, channel plan, OTA captures
 ├── docs/teardowns/         — hardware component identification

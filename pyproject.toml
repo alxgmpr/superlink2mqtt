@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "superlink2mqtt"
+version = "0.1.0"
+description = "Local SuperLink sensor gateway with MQTT discovery and a management UI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["pysodium==0.7.18", "PyYAML==6.0.3", "paho-mqtt==2.1.0"]
+
+[project.scripts]
+superlink-bridged = "superlink.bridge.runtime:main"
+superlink-control = "superlink.bridge.control:main"
+
+[tool.setuptools.packages.find]
+where = ["tools/sx1302"]
+include = ["superlink*"]
+
+[tool.setuptools.package-data]
+"superlink.bridge" = ["profiles/*.yaml", "frontend/*.html", "frontend/*.css", "frontend/*.js"]

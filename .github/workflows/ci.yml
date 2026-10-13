@@ -31,6 +31,13 @@ jobs:
         env:
           HYPOTHESIS_PROFILE: ci
         run: python -m pytest tests/ -q --hypothesis-show-statistics
+      - name: Build and check the installable gateway package
+        run: |
+          python -m pip wheel . --no-deps --wheel-dir "$RUNNER_TEMP/superlink-wheels"
+          python -m pip install --no-deps "$RUNNER_TEMP"/superlink-wheels/*.whl
+          cd "$RUNNER_TEMP"
+          superlink-bridged --help
+          python -c 'from superlink.bridge.profiles import ProfileRegistry; ProfileRegistry.load(); from superlink.bridge.web import ASSETS; assert all((ASSETS / name).is_file() for name in ("index.html", "app.js", "style.css"))'
       - name: Cache pinned Lean toolchain
         uses: actions/cache@v4
         with:

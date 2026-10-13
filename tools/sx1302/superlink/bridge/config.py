@@ -1,6 +1,7 @@
 """Runtime configuration for the SuperLink bridge daemon."""
 from __future__ import annotations
 from dataclasses import dataclass, field
+import os
 import yaml
 
 # Documented Ubiquiti factory-default pairing key (docs/protocol/crypto_and_pairing.md).
@@ -9,6 +10,22 @@ DEFAULT_PAIRING_KEY = bytes.fromhex(
 )
 
 ADOPT_ALL = object()  # sentinel: adopt any discovered device
+
+
+@dataclass
+class WebConfig:
+    token: str = field(repr=False)
+    host: str = "127.0.0.1"
+    port: int = 8099
+
+    def __post_init__(self):
+        if (not isinstance(self.token, str) or len(self.token) < 32
+                or any(not 33 <= ord(c) <= 126 for c in self.token)):
+            raise ValueError("Web access token must contain at least 32 printable ASCII characters without spaces")
+        if not isinstance(self.host, str) or not self.host:
+            raise ValueError("Web host must be a nonempty string")
+        if type(self.port) is not int or not 0 <= self.port <= 65535:
+            raise ValueError("Web port must be between 0 and 65535")
 
 
 @dataclass
@@ -35,6 +52,12 @@ class RuntimeConfig:
     csv_path: str | None = None
     mqtt: "MqttConfig | None" = None
     control_socket: str | None = None
+    web: WebConfig | None = None
+    hal_library: str = field(default_factory=lambda: os.path.expanduser(
+        "~/sx1302_hal/libloragw/libloragw.so"))
+    spi_path: str = "/dev/spidev0.0"
+    reset_script: str = field(default_factory=lambda: os.path.expanduser(
+        "~/sx1302_hal/tools/reset_lgw.sh"))
     # This sensor streams telemetry every ~11s while connected (measured on
     # hardware, door open AND closed — REPORT_INTERVAL=300 does NOT govern the
     # connected cadence), so 60/150s tolerate several missed reports before
@@ -71,6 +94,17 @@ class RuntimeConfig:
         control_socket = doc.get("control_socket", DEFAULT_SOCKET_PATH)
 
         mqtt_doc = doc.get("mqtt")
+        web_doc = doc.get("web")
+        web = None
+        if web_doc is not None:
+            if not isinstance(web_doc, dict):
+                raise ValueError("web must be a mapping")
+            token_env = web_doc.get("token_env", "SUPERLINK_WEB_TOKEN")
+            if not isinstance(token_env, str):
+                raise ValueError("web.token_env must name an environment variable")
+            web = WebConfig(token=os.environ.get(token_env, ""),
+                            host=web_doc.get("host", "127.0.0.1"),
+                            port=web_doc.get("port", 8099))
         mqtt = None
         if mqtt_doc is not None:
             if "host" not in mqtt_doc:
@@ -97,6 +131,10 @@ class RuntimeConfig:
             csv_path=log.get("csv"),
             mqtt=mqtt,
             control_socket=control_socket,
+            web=web,
+            hal_library=os.path.expanduser(doc.get("hal_library", "~/sx1302_hal/libloragw/libloragw.so")),
+            spi_path=doc.get("spi_path", "/dev/spidev0.0"),
+            reset_script=os.path.expanduser(doc.get("reset_script", "~/sx1302_hal/tools/reset_lgw.sh")),
             link_lost_timeout=float(doc.get("link_lost_timeout", 60.0)),
             watchdog_timeout=float(doc.get("watchdog_timeout", 150.0)),
             watchdog_short_challenge_k=int(

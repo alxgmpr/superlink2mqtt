@@ -1,5 +1,9 @@
 # SuperLink bridge daemon config. Copy to superlink_bridge.yaml and edit.
 gw_mac: "010203040506"        # this bridge's 6-byte gateway MAC (hex)
+# Native radio paths are configurable for installations outside a Pi home dir.
+# hal_library: "/opt/sx1302_hal/libloragw/libloragw.so"
+# spi_path: "/dev/spidev0.0"
+# reset_script: "/opt/sx1302_hal/tools/reset_lgw.sh"
 pairing_key: null             # null => Ubiquiti factory-default pairing key
 store_path: "superlink_devices.json"
 adopt:                        # sensor MACs this bridge owns; or the string: all
@@ -22,6 +26,14 @@ link_lost_timeout: 60
 # Send a command with:
 #   python3 -m superlink.bridge.control send "property_set_raw 13 0 012c"
 control_socket: "/tmp/superlink_bridge.sock"
+
+# Optional management UI. Set SUPERLINK_WEB_TOKEN to a random token of at
+# least 32 characters before starting. Bind to a LAN address only behind HTTPS
+# or a trusted tunnel; the token grants device control and key import access.
+# web:
+#   host: "127.0.0.1"
+#   port: 8099
+#   token_env: "SUPERLINK_WEB_TOKEN"
 
 # Optional: MQTT / Home Assistant. DISABLED by default — uncomment this whole
 # block (and set `host`) to enable. With it commented out, the daemon runs with

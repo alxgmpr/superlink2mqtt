@@ -276,9 +276,11 @@ class SX1302:
 
     MAX_RX_PKT = 16
 
-    def __init__(self, lib_path: str = HAL_LIB_PATH, spi_path: bytes = SPI_PATH):
+    def __init__(self, lib_path: str = HAL_LIB_PATH, spi_path: bytes = SPI_PATH,
+                 reset_script: str = RESET_SCRIPT):
         self._lib = ctypes.CDLL(lib_path)
         self._spi_path = spi_path
+        self._reset_script = reset_script
         self._started = False
         self._dl_channel = 0  # 0 = UL-only, 9-16 = combined UL+DL
         self._if_to_ul_ch = IF_TO_UL_CH
@@ -425,7 +427,7 @@ class SX1302:
             tx_rf_chain: Which radio to TX on (0=Radio A, 1=Radio B).
         """
         self._tx_rf_chain = tx_rf_chain
-        subprocess.run([RESET_SCRIPT, "start"], check=True)
+        subprocess.run([self._reset_script, "start"], check=True)
         if dl_channel is not None:
             if not (9 <= dl_channel <= 16):
                 raise ValueError(f"dl_channel must be 9-16, got {dl_channel}")
@@ -533,7 +535,7 @@ class SX1302:
         """Stop the concentrator."""
         if self._started:
             self._lib.lgw_stop()
-            subprocess.run([RESET_SCRIPT, "stop"], check=False)
+            subprocess.run([self._reset_script, "stop"], check=False)
             self._started = False
 
     def receive(self) -> list[RxPacket]:

@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SuperLink · Devices</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="./"
+        ><span class="mark">s<span>↗</span></span
+        ><span
+          >superlink<span class="brand-sub"
+            >YOUR SENSORS. YOUR HOME.</span
+          ></span
+        ></a
+      >
+      <div class="nav-label">WORKSPACE</div>
+      <nav aria-label="Main navigation">
+        <button class="nav active" data-page="devices">
+          ▦ <span>Devices</span
+          ><span id="nav-count" class="count">0</span></button
+        ><button class="nav" data-page="import">
+          ↳ <span>Import sensors</span></button
+        ><button class="nav" data-page="activity">
+          ≋ <span>Activity</span></button
+        ><button class="nav" data-page="setup">⚙ <span>Gateway</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <span class="pulse"></span> Local by design
+        <div>SuperLink → MQTT → Home Assistant</div>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <span
+          >Workspace <span class="slash">/</span>
+          <strong id="breadcrumb">Devices</strong></span
+        >
+        <div>
+          <span class="pill" id="connection">Locked</span
+          ><button id="lock" class="text-button" hidden>Lock</button>
+        </div>
+      </header>
+      <div id="notice" role="status" hidden></div>
+      <section id="login" class="login panel">
+        <div class="eyebrow">WELCOME HOME</div>
+        <h1>A little closer<br />to your sensors.</h1>
+        <p>
+          Connect to your gateway to manage devices and bring existing sensors
+          into Home Assistant.
+        </p>
+        <form id="login-form">
+          <label for="token">Gateway access token</label
+          ><input
+            id="token"
+            type="password"
+            autocomplete="off"
+            required
+            placeholder="Enter your access token"
+          /><button class="primary" type="submit">
+            Open workspace <span>→</span>
+          </button>
+        </form>
+        <p class="fine">
+          Set with SUPERLINK_WEB_TOKEN on your gateway. Your token stays in this
+          tab’s memory.
+        </p>
+      </section>
+      <div id="workspace" hidden>
+        <div id="demo-banner" class="banner" hidden>
+          DEMO WORKSPACE · Sample readings. Imports and device commands are
+          disabled.
+        </div>
+        <section id="page-devices">
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">YOUR CONNECTED HOME</div>
+              <h1>Devices<span class="accent">.</span></h1>
+              <p>Small sensors. A clearer picture of home.</p>
+            </div>
+            <button class="primary" data-page="import">↳ Import sensors</button>
+          </div>
+          <div class="stats">
+            <div class="panel stat">
+              <span>YOUR DEVICES</span><strong id="total">0</strong
+              ><small>In this workspace</small>
+            </div>
+            <div class="panel stat">
+              <span>RECENTLY HEARD</span><strong id="recent">0</strong
+              ><small>Telemetry in the last minute</small>
+            </div>
+            <div class="panel stat">
+              <span>MQTT CONNECTION</span
+              ><strong id="mqtt-status" class="stat-word">—</strong
+              ><small>Home Assistant discovery</small>
+            </div>
+          </div>
+          <div class="panel device-panel">
+            <div class="list-heading">
+              <div>
+                <h2>
+                  All devices <span id="device-count" class="count">0</span>
+                </h2>
+                <p>Select a sensor to explore its readings.</p>
+              </div>
+              <input
+                id="search"
+                type="search"
+                placeholder="Search name or MAC…"
+                aria-label="Search devices"
+              />
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>DEVICE</th>
+                    <th>STATUS</th>
+                    <th>BATTERY</th>
+                    <th>SIGNAL</th>
+                    <th>LAST HEARD</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="devices"></tbody>
+              </table>
+            </div>
+            <div id="empty" class="empty" hidden>
+              <strong>Your first sensor belongs here.</strong>
+              <p>
+                Import existing adoption keys, or wait for a nearby
+                factory-default sensor to be discovered.
+              </p>
+            </div>
+          </div>
+          <div class="footnote">
+            <span class="dot"></span> Sensor data stays on your network.
+            Readings update automatically.
+          </div>
+        </section>
+        <section id="page-import" hidden>
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">BRING YOUR SENSORS ALONG</div>
+              <h1>
+                A new home.<br />Same sensors<span class="accent">.</span>
+              </h1>
+              <p>
+                Import persistent adoption keys from an existing installation.
+              </p>
+            </div>
+          </div>
+          <div class="import-grid">
+            <div class="panel form-panel">
+              <div class="step">01 / SELECT YOUR EXPORT</div>
+              <h2>Import sensor keys</h2>
+              <p>
+                Choose a version 1 migration JSON file or a complete Ubiquiti
+                <code>addDevice</code> request with its current key pair.
+              </p>
+              <label class="file-label" for="import-file"
+                >Choose a JSON file<input
+                  id="import-file"
+                  type="file"
+                  accept=".json,application/json" /></label
+              ><label for="import-json">Or paste your export</label
+              ><textarea
+                id="import-json"
+                spellcheck="false"
+                rows="9"
+                placeholder='{"version": 1, "devices": […]}'
+              ></textarea
+              ><button id="preview" class="primary">Review import →</button>
+            </div>
+            <div class="panel form-panel">
+              <div class="step">02 / REVIEW & CONNECT</div>
+              <h2>Make the move</h2>
+              <div id="preview-result">
+                <p>
+                  Your devices will appear here after validation. Existing
+                  devices are never overwritten.
+                </p>
+              </div>
+              <label class="check"
+                ><input id="confirm-import" type="checkbox" />I have stopped the
+                previous gateway from managing these sensors.</label
+              ><button id="apply-import" class="primary" disabled>
+                Import devices
+              </button>
+              <p class="fine">
+                Import creates a backup of an existing registry. Sensors remain
+                “awaiting reconnect” until they communicate with this gateway.
+              </p>
+            </div>
+          </div>
+          <div class="banner subtle">
+            Use persistent <code>key</code> and <code>fallbackKey</code> values.
+            Temporary session keys cannot restore a sensor after reconnect.
+            Automatic extraction from UniFi is not available in this release.
+          </div>
+        </section>
+        <section id="page-activity" hidden>
+          <div class="page-heading">
+            <div class="heading-copy">
+              <div class="eyebrow">WHAT’S HAPPENING</div>
+              <h1>Activity<span class="accent">.</span></h1>
+              <p>Commands and sensor responses from this service session.</p>
+            </div>
+          </div>
+          <div class="panel" id="activity"></div>
+        </section>
+        <section id="page-setup" hidden>
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">THE HEART OF YOUR NETWORK</div>
+              <h1>Gateway<span class="accent">.</span></h1>
+              <p>Your local connection to SuperLink.</p>
+            </div>
+          </div>
+          <div class="panel form-panel">
+            <dl id="gateway-details"></dl>
+            <p>
+              Connection settings are read from the gateway YAML configuration.
+              Restart the service after editing them.
+            </p>
+            <button id="diagnostics" class="secondary">
+              Download diagnostics
+            </button>
+            <p class="fine">
+              Includes device identifiers, readings and recent activity.
+              Adoption keys, access tokens and MQTT credentials are excluded.
+            </p>
+          </div>
+          <div class="banner subtle">
+            SX1302 is the available backend. Support for keeping a Ubiquiti
+            gateway is planned.
+          </div>
+        </section>
+      </div>
+    </main>
+    <dialog id="device-dialog">
+      <div class="dialog-heading">
+        <div>
+          <div class="eyebrow">DEVICE DETAILS</div>
+          <h2 id="detail-name"></h2>
+          <code id="detail-mac"></code>
+        </div>
+        <button
+          id="close-detail"
+          class="icon-button"
+          aria-label="Close device details"
+        >
+          ×
+        </button>
+      </div>
+      <div id="detail-readings" class="readings"></div>
+      <div class="actions" id="detail-actions"></div>
+      <p class="fine">
+        Commands wait for the sensor’s next receive window. “Queued” does not
+        mean the sensor has confirmed them.
+      </p>
+    </dialog>
+  </body>
+</html>
