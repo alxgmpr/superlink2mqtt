@@ -9,6 +9,44 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  test-python-lean:
+    name: Python tests and Lean verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsodium-dev
+          python -m pip install -r requirements-test.txt
+      - name: Run Python tests
+        env:
+          HYPOTHESIS_PROFILE: ci
+        run: python -m pytest tests/ -q --hypothesis-show-statistics
+      - name: Cache pinned Lean toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan/toolchains
+          key: lean-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('verification/lean/lean-toolchain') }}
+      - name: Install elan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/elan"
+          gh release download v4.2.4 --repo leanprover/elan --pattern elan-x86_64-unknown-linux-gnu.tar.gz --dir "$RUNNER_TEMP/elan"
+          tar -xzf "$RUNNER_TEMP/elan/elan-x86_64-unknown-linux-gnu.tar.gz" -C "$RUNNER_TEMP/elan"
+          "$RUNNER_TEMP/elan/elan-init" -y --no-modify-path --default-toolchain none
+      - name: Check Lean proofs and Python correspondence
+        run: python tools/check_lean.py
+
   sniffer-build:
     name: Build sniffer firmware
     runs-on: ubuntu-latest

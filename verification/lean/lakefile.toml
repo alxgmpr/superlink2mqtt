@@ -1,0 +1,11 @@
+name = "superlinkVerification"
+version = "0.1.0"
+defaultTargets = ["Superlink", "vectors"]
+leanOptions = { warningAsError = true }
+
+[[lean_lib]]
+name = "Superlink"
+
+[[lean_exe]]
+name = "vectors"
+root = "Main"

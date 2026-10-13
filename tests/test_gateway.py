@@ -1,6 +1,7 @@
 """Tests for the gateway connection state machine."""
 import pytest
 from superlink.gateway import GatewaySession, State
+from superlink.decoder import compute_mic
 from tests.fixtures.captured_frames import (
     DEFAULT_PAIRING_KEY, SENSOR_MAC, DL_CHANNELS_HZ, BEACON_FREQ_HZ,
 )
@@ -371,7 +372,7 @@ def test_active_0x53_emits_fresh_adopt_request():
 
     # Build a synthetic 0x53 UL from the sensor — encrypted body, counter=0.
     ul_payload = b"\x01\x00"  # sensor mgmt poll body (REQUEST_STATUS_RESPONSE)
-    ul_mic = b"\x11\x22\x33\x44"
+    ul_mic = compute_mic(b"\xe0\x53" + SENSOR_MAC + b"\x10\x20", ul_payload)
     ul_raw = build_frame(0xE0, 0x53, SENSOR_MAC, 0x10, 0x20,
                          ul_mic, ul_payload, session.session_key, counter=0)
 
@@ -428,7 +429,7 @@ def test_active_0x03_decodes_and_derives_addDevice_keys():
 
     # Wrap in a 0x54 UL frame (data direction). counter computed from
     # seq_hi - ul_counter_offset = 1 - 0 = 1.
-    mic = b"\xAA\xBB\xCC\xDD"
+    mic = compute_mic(b"\xe0\x54" + SENSOR_MAC + b"\x01\x00", body)
     raw = build_frame(0xE0, 0x54, SENSOR_MAC, 0x01, 0x00,
                       mic, body, session.session_key, counter=1)
 
@@ -478,8 +479,9 @@ def test_adopt_response_defers_rotation_until_commit_observed():
     dev_fb_pub = bytes.fromhex(
         "ef9a96027a8b842113c6f75d7f3f6107a531275b359a2dd107478dfaac0eac06")
     body = bytes([MSG_ADOPT_RESPONSE, 0x9C]) + dev_pub + dev_fb_pub
+    mic = compute_mic(b"\xe0\x54" + SENSOR_MAC + b"\x01\x00", body)
     raw = build_frame(0xE0, 0x54, SENSOR_MAC, 0x01, 0x00,
-                      b"\xAA\xBB\xCC\xDD", body, session.session_key, counter=1)
+                      mic, body, session.session_key, counter=1)
 
     session.handle_rx(raw, ul_channel=1)
 
@@ -533,8 +535,9 @@ def test_unadopted_form_0x40_does_not_rotate():
     dev_fb_pub = bytes.fromhex(
         "ef9a96027a8b842113c6f75d7f3f6107a531275b359a2dd107478dfaac0eac06")
     body = bytes([MSG_ADOPT_RESPONSE, 0x9C]) + dev_pub + dev_fb_pub
+    mic = compute_mic(b"\xe0\x54" + SENSOR_MAC + b"\x01\x00", body)
     raw = build_frame(0xE0, 0x54, SENSOR_MAC, 0x01, 0x00,
-                      b"\xAA\xBB\xCC\xDD", body, session.session_key, counter=1)
+                      mic, body, session.session_key, counter=1)
     session.handle_rx(raw, ul_channel=1)
 
     # Unadopted-form discovery (zero networkId).

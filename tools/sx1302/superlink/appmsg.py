@@ -179,7 +179,8 @@ def decode_message(body: bytes, sizes: dict | None = None) -> dict:
 
 
 def _decode_device_info_report(s: bytes) -> dict:
-    if len(s) < 29:
+    # Fixed fields (29B) plus both list-count bytes, even for empty lists.
+    if len(s) < 31:
         raise ValueError("short DEVICE_INFO_REPORT")
     e = 0
 
@@ -202,11 +203,15 @@ def _decode_device_info_report(s: bytes) -> dict:
 
     msg_count = s[e]
     e += 1
+    if e + msg_count >= len(s):
+        raise ValueError("short DEVICE_INFO_REPORT message list")
     supported_msgs = list(s[e:e + msg_count])
     e += msg_count
 
     prop_count = s[e]
     e += 1
+    if e + 3 * prop_count > len(s):
+        raise ValueError("short DEVICE_INFO_REPORT property list")
     props = []
     for _ in range(prop_count):
         props.append({
@@ -251,9 +256,13 @@ def _decode_properties(s: bytes, sizes: dict) -> list:
                     break
                 vlen = s[i]
                 i += 1
+                if i + vlen > n:
+                    break
                 value = bytes(s[i:i + vlen])
                 i += vlen
             else:
+                if i + size > n:
+                    break
                 value = bytes(s[i:i + size])
                 i += size
             out.append({"propertyId": prop_id, "channel": channel,

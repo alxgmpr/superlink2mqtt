@@ -13,7 +13,7 @@ from superlink.bridge.core import OutgoingFrame
 from superlink.bridge.session import DeviceSession, State
 from superlink.bridge.store import DeviceRecord
 from superlink.bridge.profiles import ProfileRegistry
-from superlink.decoder import build_frame, parse_frame, decrypt_frame
+from superlink.decoder import build_frame, compute_mic, parse_frame, decrypt_frame
 from tests.fixtures.captured_frames import SENSOR_MAC, DEFAULT_PAIRING_KEY
 
 GW_MAC = bytes.fromhex("AABBCCDDEE01")
@@ -35,8 +35,10 @@ def _active_adopted_session():
 
 def _feed_0x53(s, channel=1, seq_hi=0x22):
     """Feed a synthetic 0x53 mgmt poll (encrypted body, counter=0)."""
+    header = bytes([0xE0, 0x53]) + SENSOR_MAC + bytes([seq_hi, 0x20])
+    body = b"\x01\x00"
     raw = build_frame(0xE0, 0x53, SENSOR_MAC, seq_hi, 0x20,
-                      b"\x11\x22\x33\x44", b"\x01\x00", SESSION_KEY, counter=0)
+                      compute_mic(header, body), body, SESSION_KEY, counter=0)
     return s.feed(parse_frame(raw), channel, now=1.0), seq_hi
 
 

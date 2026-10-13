@@ -173,6 +173,34 @@ superlink2mqtt/
 
 See [docs/RE_PLAN.md](docs/RE_PLAN.md) for the phased reverse engineering roadmap.
 
+## Testing
+
+With libsodium installed and the Python virtual environment active:
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m pytest tests/ -q
+python tools/check_lean.py
+```
+
+The Python suite includes Hypothesis tests for malformed packets, pairing,
+handshake retries, queued commands, and reconnect/watchdog timing. It uses
+synthetic sensor frames, real cryptography, and a virtual clock with no radio
+I/O. For a larger local run or a reproducible CI-style run:
+
+```bash
+HYPOTHESIS_PROFILE=extended python -m pytest tests/test_packet_properties.py tests/test_session_properties.py -q
+HYPOTHESIS_PROFILE=ci python -m pytest tests/ -q --hypothesis-show-statistics
+```
+
+See [Python property tests](docs/TESTING.md) for invariants, replay instructions,
+and limits.
+
+The Lean command requires elan and checks formal wire-format proofs plus
+10,278 model-to-Python vectors. Both Python tests and Lean verification run in
+CI. See [Lean verification](verification/lean/README.md) for installation,
+coverage, and proof boundaries.
+
 ## Legal
 
 Interoperability research under applicable reverse engineering exemptions. Based on publicly available FCC filings, over-the-air captures (legal under FCC Part 15), and firmware analysis for interoperability purposes.
