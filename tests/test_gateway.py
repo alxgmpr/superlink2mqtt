@@ -22,12 +22,23 @@ def test_start_transitions_to_beaconing():
     assert session.state == State.BEACONING
 
 
-def test_beacon_due():
-    """Beacon should be due immediately after start."""
+@pytest.mark.parametrize("clock_start", [0.0, 10.0, 1000.0])
+def test_beacon_due(monkeypatch, clock_start):
+    """Legacy first beacon is immediate even on a freshly booted host."""
+    now = clock_start
+    monkeypatch.setattr("superlink.bridge.session.time.monotonic", lambda: now)
     gw_mac = bytes.fromhex("AABBCCDDEEFF")
     session = GatewaySession(gw_mac=gw_mac, pairing_key=DEFAULT_PAIRING_KEY)
     session.start()
     assert session.beacon_due()
+    session.build_beacon()
+    assert not session.beacon_due()
+    now += session.beacon_interval - 1
+    assert not session.beacon_due()
+    now += 1
+    assert session.beacon_due()
+    session.state = State.ACTIVE
+    assert not session.beacon_due()
 
 
 def test_build_beacon():

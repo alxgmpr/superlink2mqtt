@@ -64,6 +64,12 @@ class GatewaySession(DeviceSession):
         self.sweep = sweep
         self._sweep_tag = 0
 
+    def start(self, now: float = 0.0):
+        super().start(now)
+        # The legacy adapter promises an immediate first beacon. Zero is not
+        # a past deadline on a freshly booted host; monotonic has no fixed epoch.
+        self._last_beacon_time = float("-inf")
+
     # --- legacy `state` surface: the raw State enum, readable and settable ---
     @property
     def state(self) -> State:
