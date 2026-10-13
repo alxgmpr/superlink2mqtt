@@ -41,18 +41,19 @@ async function api(path, body) {
 function page(name) {
   for (const item of ["devices", "import", "activity", "setup"])
     $("page-" + item).hidden = item !== name;
-  document
-    .querySelectorAll(".nav")
-    .forEach((node) =>
-      node.classList.toggle("active", node.dataset.page === name),
-    );
+  document.querySelectorAll(".nav").forEach((node) => {
+    const active = node.dataset.page === name;
+    node.classList.toggle("active", active);
+    if (active) node.setAttribute("aria-current", "page");
+    else node.removeAttribute("aria-current");
+  });
   $("breadcrumb").textContent = {
-    devices: "Devices",
-    import: "Import sensors",
-    activity: "Activity",
-    setup: "Gateway",
+    devices: "devices",
+    import: "import",
+    activity: "activity",
+    setup: "gateway",
   }[name];
-  document.title = `SuperLink · ${$("breadcrumb").textContent}`;
+  document.title = `superlink2mqtt / ${$("breadcrumb").textContent}`;
 }
 function lock() {
   token = "";
@@ -70,7 +71,7 @@ function lock() {
   $("login").hidden = false;
   $("workspace").hidden = true;
   $("lock").hidden = true;
-  $("connection").textContent = "Locked";
+  $("connection").textContent = "locked";
   $("token").value = "";
   $("import-json").value = "";
   $("import-file").value = "";
@@ -79,10 +80,10 @@ function lock() {
   $("device-dialog").close();
 }
 function age(timestamp) {
-  if (!timestamp) return "Not yet";
+  if (!timestamp) return "—";
   const seconds = Math.max(0, Math.floor(Date.now() / 1000 - timestamp));
   return seconds < 5
-    ? "Just now"
+    ? "now"
     : seconds < 60
       ? `${seconds}s ago`
       : seconds < 3600
@@ -115,7 +116,7 @@ function renderDevices() {
       button = el("button", undefined, "device-name");
     const label = el("span", d.name);
     label.append(el("small", d.mac.match(/../g).join(":").toUpperCase()));
-    button.append(el("span", "▯", "device-icon"), label);
+    button.append(label);
     button.addEventListener("click", () => showDevice(d.mac));
     nameCell.append(button);
     const stateCell = el("td");
@@ -129,34 +130,24 @@ function renderDevices() {
     const battery = d.properties.find((p) =>
       ["BATTERY", "BATTERY_LEVEL"].includes(p.name),
     );
-    const open = el("button", "→", "text-button");
-    open.setAttribute("aria-label", `View ${d.name}`);
-    open.addEventListener("click", () => showDevice(d.mac));
-    const end = el("td");
-    end.append(open);
     row.append(
       nameCell,
       stateCell,
       el("td", battery ? `${battery.value}${battery.unit || "%"}` : "—"),
       el("td", d.rssi == null ? "—" : `${d.rssi} dBm`),
       el("td", age(d.last_seen)),
-      end,
     );
     $("devices").append(row);
   }
   $("empty").hidden = devices.length !== 0;
-  $("device-count").textContent = devices.length;
 }
 function render() {
   $("total").textContent = state.devices.length;
-  $("nav-count").textContent = state.devices.length;
   $("recent").textContent = state.devices.filter(
     (d) => d.last_seen && Date.now() / 1000 - d.last_seen < 60,
   ).length;
   $("mqtt-status").textContent = state.mqtt;
-  $("connection").textContent = state.demo
-    ? "Demo workspace"
-    : "Gateway connected";
+  $("connection").textContent = state.demo ? "demo" : "connected";
   $("demo-banner").hidden = !state.demo;
   renderDevices();
   $("activity").replaceChildren();
@@ -171,15 +162,12 @@ function render() {
     $("activity").append(row);
   }
   if (!state.activity.length)
-    $("activity").append(
-      el("div", "No commands or sensor responses yet.", "empty"),
-    );
+    $("activity").append(el("div", "No events.", "empty"));
   $("gateway-details").replaceChildren();
   for (const [label, value] of [
-    ["Backend", state.demo ? "SX1302 demo · no hardware" : "SX1302"],
-    ["Gateway MAC", state.gateway_mac],
+    ["Backend", state.demo ? "SX1302 (demo)" : "SX1302"],
+    ["MAC", state.gateway_mac],
     ["MQTT", state.mqtt],
-    ["Management", "Authenticated local API"],
   ])
     $("gateway-details").append(el("dt", label), el("dd", value));
   if (selectedMac && $("device-dialog").open) fillDevice(selectedMac);
@@ -197,7 +185,7 @@ async function refresh() {
     await pollExtraction();
   } catch (error) {
     notice(error.message);
-    $("connection").textContent = "Connection interrupted";
+    $("connection").textContent = "disconnected";
   } finally {
     refreshing = false;
     clearTimeout(timer);
@@ -223,31 +211,25 @@ function fillDevice(mac) {
     $("detail-readings").append(item);
   }
   if (!d.properties.length)
-    $("detail-readings").append(
-      el("p", "Waiting for this sensor’s first readings."),
-    );
+    $("detail-readings").append(el("p", "No readings."));
   $("detail-actions").replaceChildren();
   const commands =
     d.state === "discovered"
-      ? [["adopt", "Pair this sensor"]]
+      ? [["adopt", "Pair"]]
       : [
           ["locate", "Locate"],
-          ["refresh", "Refresh info"],
+          ["refresh", "Refresh"],
           ["reboot", "Reboot"],
         ];
   for (const [command, label] of commands) {
     const button = el("button", label, "secondary");
     button.disabled = state.demo;
     button.addEventListener("click", async () => {
-      if (
-        command === "reboot" &&
-        !confirm(`Reboot ${d.name}? Telemetry will pause while it reconnects.`)
-      )
-        return;
+      if (command === "reboot" && !confirm(`Reboot ${d.name}?`)) return;
       button.disabled = true;
       try {
         await api(`devices/${mac}/command`, { command });
-        notice(`${label} queued. Waiting for the sensor’s receive window.`);
+        notice(`${label} queued.`);
         await refresh();
       } catch (error) {
         notice(error.message);
@@ -269,9 +251,7 @@ function invalidatePreview() {
   previewJobId = null;
   $("apply-import").disabled = true;
   $("confirm-import").checked = false;
-  $("preview-result").replaceChildren(
-    el("p", "Review your export before importing."),
-  );
+  $("preview-result").replaceChildren(el("p", "No keys selected."));
 }
 document
   .querySelectorAll("[data-page]")
@@ -308,7 +288,7 @@ $("import-file").addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file) return;
   if (file.size > 100000) {
-    notice("Choose an export smaller than 100 KB.");
+    notice("Maximum file size: 100 KB.");
     return;
   }
   const contents = await file.text();
@@ -325,15 +305,11 @@ $("preview").addEventListener("click", async () => {
     if (result.can_import) previewDocument = document;
     notice(
       result.can_import
-        ? "Keys validated. Review the devices before importing."
-        : "Import blocked: existing devices cannot be overwritten.",
+        ? "Keys validated."
+        : "Import blocked: devices already exist.",
     );
   } catch (error) {
-    notice(
-      error instanceof SyntaxError
-        ? "The export is not valid JSON."
-        : error.message,
-    );
+    notice(error instanceof SyntaxError ? "Invalid JSON." : error.message);
   }
 });
 $("confirm-import").addEventListener("change", () => {
@@ -356,7 +332,7 @@ $("apply-import").addEventListener("click", async () => {
     $("import-json").value = "";
     $("import-file").value = "";
     notice(
-      `${result.imported} ${result.imported === 1 ? "device" : "devices"} imported. Waiting for sensors to reconnect.`,
+      `${result.imported} ${result.imported === 1 ? "device" : "devices"} imported. Awaiting reconnect.`,
     );
     page("devices");
     await refresh();
@@ -428,7 +404,9 @@ function renderExtraction() {
     $("extraction-status").dataset.signature = signature;
     $("extraction-status").replaceChildren(
       el("strong", job.state.replaceAll("_", " ")),
-      el("p", job.message || ""),
+      ...(["failed", "recovery_required"].includes(job.state)
+        ? [el("p", job.message || "")]
+        : []),
     );
     if (job.host)
       $("extraction-status").append(
@@ -438,7 +416,7 @@ function renderExtraction() {
       $("extraction-status").append(
         el(
           "p",
-          `${job.count} ${job.count === 1 ? "sensor has" : "sensors have"} acknowledged key pairs. ${job.excluded} excluded. Review within ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`,
+          `${job.count} ready / ${job.excluded} excluded / expires ${minutes}m`,
         ),
       );
     }
@@ -513,9 +491,7 @@ $("extract-keys").addEventListener("click", async () => {
     if (token !== requestToken) return;
     sourceProbe = null;
     extractionState = result;
-    notice(
-      "Extraction started. Keep UniFi connected; you can leave this page and return to its status.",
-    );
+    notice("Extracting. Keep UniFi connected.");
   } catch (error) {
     notice(error.message);
   } finally {
@@ -533,8 +509,8 @@ $("review-extraction").addEventListener("click", async () => {
     if (result.can_import) previewJobId = jobId;
     notice(
       result.can_import
-        ? "Review the sensors, then stop the previous gateway before importing."
-        : "Existing devices cannot be overwritten.",
+        ? "Stop the previous gateway before import."
+        : "Devices already exist.",
     );
   } catch (error) {
     notice(error.message);
