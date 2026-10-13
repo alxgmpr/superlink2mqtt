@@ -25,19 +25,23 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsodium-dev
+          sudo apt-get install -y libsodium-dev build-essential
           python -m pip install -r requirements-test.txt
       - name: Run Python tests
         env:
           HYPOTHESIS_PROFILE: ci
         run: python -m pytest tests/ -q --hypothesis-show-statistics
+      - name: Cross-compile the ARM gateway capture helper
+        run: |
+          python -m pip install ziglang==0.14.1
+          PYTHONPATH=tools/sx1302 python -c 'from superlink.bridge.extraction.build import build_helper; assert build_helper()'
       - name: Build and check the installable gateway package
         run: |
           python -m pip wheel . --no-deps --wheel-dir "$RUNNER_TEMP/superlink-wheels"
           python -m pip install --no-deps "$RUNNER_TEMP"/superlink-wheels/*.whl
           cd "$RUNNER_TEMP"
           superlink-bridged --help
-          python -c 'from superlink.bridge.profiles import ProfileRegistry; ProfileRegistry.load(); from superlink.bridge.web import ASSETS; assert all((ASSETS / name).is_file() for name in ("index.html", "app.js", "style.css"))'
+          python -c 'from superlink.bridge.profiles import ProfileRegistry; ProfileRegistry.load(); from superlink.bridge.web import ASSETS; assert all((ASSETS / name).is_file() for name in ("index.html", "app.js", "style.css")); from superlink.bridge.extraction.build import NATIVE; assert all((NATIVE / name).is_file() for name in ("capture.c", "run.sh", "restore.sh", "watchdog.sh"))'
       - name: Cache pinned Lean toolchain
         uses: actions/cache@v4
         with:

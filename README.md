@@ -11,10 +11,11 @@ presses) plus command buttons (locate, reboot, refresh, clear tamper). See
 **[docs/OPEN_GATEWAY_PLAN.md](docs/OPEN_GATEWAY_PLAN.md)** for current state and
 open work.
 
-The bridge now includes a local **management UI and persistent-key importer**.
+The bridge now includes a local **management UI, automatic SSH key extraction, and persistent-key importer**.
 Install with `python -m pip install .`, then run `superlink-bridged --demo` to
 preview it without hardware. See [management setup and migration](docs/MANAGEMENT_UI.md)
-for installation, token configuration, supported import formats and current
+for installation, guided migration from existing Ubiquiti gateways, supported
+import formats and current
 limitations. Automatic UniFi key extraction and a Ubiquiti gateway backend are
 not yet included.
 

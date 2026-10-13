@@ -3,6 +3,9 @@ const $ = (id) => document.getElementById(id);
 let token = "",
   state = null,
   previewDocument = null,
+  previewJobId = null,
+  sourceProbe = null,
+  extractionState = { state: "idle" },
   selectedMac = null,
   timer = null,
   refreshing = false,
@@ -54,6 +57,14 @@ function page(name) {
 function lock() {
   token = "";
   state = null;
+  sourceProbe = null;
+  extractionState = { state: "idle" };
+  $("source-password").value = "";
+  $("source-identity").hidden = true;
+  $("source-credentials").hidden = true;
+  $("extraction-status").hidden = true;
+  $("review-extraction").hidden = true;
+  $("confirm-source").checked = false;
   invalidatePreview();
   clearTimeout(timer);
   $("login").hidden = false;
@@ -183,6 +194,7 @@ async function refresh() {
     if (token !== requestToken) return;
     state = snapshot;
     render();
+    await pollExtraction();
   } catch (error) {
     notice(error.message);
     $("connection").textContent = "Connection interrupted";
@@ -254,6 +266,7 @@ function showDevice(mac) {
 function invalidatePreview() {
   previewVersion += 1;
   previewDocument = null;
+  previewJobId = null;
   $("apply-import").disabled = true;
   $("confirm-import").checked = false;
   $("preview-result").replaceChildren(
@@ -276,6 +289,7 @@ $("login-form").addEventListener("submit", async (event) => {
     $("lock").hidden = false;
     notice("");
     render();
+    await pollExtraction();
     clearTimeout(timer);
     timer = setTimeout(refresh, 3000);
   } catch (error) {
@@ -307,16 +321,7 @@ $("preview").addEventListener("click", async () => {
     const document = JSON.parse($("import-json").value);
     const result = await api("import/preview", { document });
     if (version !== previewVersion) return;
-    $("preview-result").replaceChildren();
-    for (const d of result.devices) {
-      const row = el(
-        "div",
-        `${d.name}${d.conflict ? " · Already exists" : " · Ready"}`,
-        `preview-row${d.conflict ? " conflict" : ""}`,
-      );
-      row.append(el("small", d.mac));
-      $("preview-result").append(row);
-    }
+    renderPreview(result);
     if (result.can_import) previewDocument = document;
     notice(
       result.can_import
@@ -333,14 +338,18 @@ $("preview").addEventListener("click", async () => {
 });
 $("confirm-import").addEventListener("change", () => {
   $("apply-import").disabled =
-    !previewDocument || !$("confirm-import").checked || (state?.demo ?? true);
+    (!previewDocument && !previewJobId) ||
+    !$("confirm-import").checked ||
+    (state?.demo ?? true);
 });
 $("apply-import").addEventListener("click", async () => {
-  if (!previewDocument) return;
+  if (!previewDocument && !previewJobId) return;
   $("apply-import").disabled = true;
   try {
-    const result = await api("import", {
-      document: previewDocument,
+    const result = await api(previewJobId ? "extraction/import" : "import", {
+      ...(previewJobId
+        ? { job_id: previewJobId }
+        : { document: previewDocument }),
       confirmed: $("confirm-import").checked,
     });
     invalidatePreview();
@@ -365,4 +374,188 @@ $("diagnostics").addEventListener("click", () => {
   link.download = "superlink-diagnostics.json";
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+function renderPreview(result) {
+  $("preview-result").replaceChildren();
+  for (const d of result.devices) {
+    const row = el(
+      "div",
+      `${d.name}${d.conflict ? " · Already exists" : " · Ready"}`,
+      `preview-row${d.conflict ? " conflict" : ""}`,
+    );
+    row.append(el("small", d.mac));
+    $("preview-result").append(row);
+  }
+}
+function renderExtraction() {
+  const job = extractionState;
+  const active = ![
+    "idle",
+    "ready",
+    "failed",
+    "expired",
+    "imported",
+    "recovery_required",
+  ].includes(job.state);
+  $("probe-source").disabled =
+    active || job.state === "recovery_required" || (state?.demo ?? true);
+  $("extract-keys").disabled =
+    !sourceProbe ||
+    !$("confirm-source").checked ||
+    active ||
+    job.state === "recovery_required" ||
+    (state?.demo ?? true);
+  $("extract-keys").hidden = job.state === "recovery_required";
+  $("recover-source").hidden = job.state !== "recovery_required";
+  $("review-extraction").hidden = job.state !== "ready";
+  $("extraction-status").hidden = job.state === "idle";
+  $("source-identity").hidden = !sourceProbe;
+  $("source-credentials").hidden =
+    !sourceProbe && job.state !== "recovery_required";
+  const minutes = Math.ceil((job.expires_in || 0) / 60);
+  const signature = JSON.stringify([
+    job.state,
+    job.message,
+    job.host,
+    job.fingerprint,
+    job.count,
+    job.excluded,
+    minutes,
+    job.recovery_command,
+  ]);
+  if ($("extraction-status").dataset.signature !== signature) {
+    $("extraction-status").dataset.signature = signature;
+    $("extraction-status").replaceChildren(
+      el("strong", job.state.replaceAll("_", " ")),
+      el("p", job.message || ""),
+    );
+    if (job.host)
+      $("extraction-status").append(
+        el("code", `${job.host} · ${job.fingerprint}`, "fingerprint"),
+      );
+    if (job.state === "ready") {
+      $("extraction-status").append(
+        el(
+          "p",
+          `${job.count} ${job.count === 1 ? "sensor has" : "sensors have"} acknowledged key pairs. ${job.excluded} excluded. Review within ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`,
+        ),
+      );
+    }
+    if (job.state === "recovery_required" && job.recovery_command) {
+      $("extraction-status").append(
+        el("code", job.recovery_command, "fingerprint"),
+      );
+    }
+  }
+  if (previewJobId && (job.state !== "ready" || job.id !== previewJobId))
+    invalidatePreview();
+}
+async function pollExtraction() {
+  const requestToken = token;
+  const result = await api("extraction");
+  if (token !== requestToken) return;
+  extractionState = result;
+  renderExtraction();
+}
+function invalidateSource() {
+  sourceProbe = null;
+  $("confirm-source").checked = false;
+  $("source-password").value = "";
+  $("source-identity").hidden = true;
+  $("source-credentials").hidden =
+    extractionState.state !== "recovery_required";
+  renderExtraction();
+}
+for (const id of ["source-host", "source-port"])
+  $(id).addEventListener("input", invalidateSource);
+$("confirm-source").addEventListener("change", renderExtraction);
+$("extraction-probe-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  invalidateSource();
+  const host = $("source-host").value.trim(),
+    port = Number($("source-port").value),
+    requestToken = token;
+  $("probe-source").disabled = true;
+  try {
+    const result = await api("extraction/probe", { host, port });
+    if (
+      token !== requestToken ||
+      host !== $("source-host").value.trim() ||
+      port !== Number($("source-port").value)
+    )
+      return;
+    sourceProbe = result;
+    $("source-fingerprint").textContent =
+      `${result.host}:${result.port} · ${result.fingerprint}`;
+    $("source-identity").hidden = false;
+    $("source-credentials").hidden = false;
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    renderExtraction();
+  }
+});
+$("extract-keys").addEventListener("click", async () => {
+  if (!sourceProbe || !$("confirm-source").checked) return;
+  invalidatePreview();
+  $("extract-keys").disabled = true;
+  const requestToken = token;
+  try {
+    const pending = api("extraction/start", {
+      probe_id: sourceProbe.probe_id,
+      username: $("source-user").value.trim(),
+      password: $("source-password").value,
+      confirmed: $("confirm-source").checked,
+    });
+    $("source-password").value = "";
+    const result = await pending;
+    if (token !== requestToken) return;
+    sourceProbe = null;
+    extractionState = result;
+    notice(
+      "Extraction started. Keep UniFi connected; you can leave this page and return to its status.",
+    );
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    renderExtraction();
+  }
+});
+$("review-extraction").addEventListener("click", async () => {
+  invalidatePreview();
+  const version = previewVersion,
+    jobId = extractionState.id;
+  try {
+    const result = await api("extraction/preview", { job_id: jobId });
+    if (version !== previewVersion) return;
+    renderPreview(result);
+    if (result.can_import) previewJobId = jobId;
+    notice(
+      result.can_import
+        ? "Review the sensors, then stop the previous gateway before importing."
+        : "Existing devices cannot be overwritten.",
+    );
+  } catch (error) {
+    notice(error.message);
+  }
+});
+$("recover-source").addEventListener("click", async () => {
+  $("recover-source").disabled = true;
+  const requestToken = token;
+  try {
+    const pending = api("extraction/recover", {
+      job_id: extractionState.id,
+      username: $("source-user").value.trim(),
+      password: $("source-password").value,
+    });
+    $("source-password").value = "";
+    const result = await pending;
+    if (token === requestToken) extractionState = result;
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    $("recover-source").disabled = false;
+    renderExtraction();
+  }
 });

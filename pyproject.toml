@@ -9,7 +9,10 @@ description = "Local SuperLink sensor gateway with MQTT discovery and a manageme
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-dependencies = ["pysodium==0.7.18", "PyYAML==6.0.3", "paho-mqtt==2.1.0"]
+dependencies = ["pysodium==0.7.18", "PyYAML==6.0.3", "paho-mqtt==2.1.0", "paramiko==4.0.0"]
+
+[project.optional-dependencies]
+extraction-build = ["ziglang==0.14.1"]
 
 [project.scripts]
 superlink-bridged = "superlink.bridge.runtime:main"
@@ -21,3 +24,5 @@ include = ["superlink*"]
 
 [tool.setuptools.package-data]
 "superlink.bridge" = ["profiles/*.yaml", "frontend/*.html", "frontend/*.css", "frontend/*.js"]
+
+"superlink.bridge.extraction" = ["native/*.c", "native/*.sh", "native/*.so"]

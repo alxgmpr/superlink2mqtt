@@ -753,3 +753,36 @@ dialog::backdrop {
     gap: 12px;
   }
 }
+
+.fingerprint {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin: 12px 0;
+}
+.extraction-status {
+  margin: 20px 0;
+  padding: 16px;
+  background: var(--surface, #f4f5ef);
+  border-radius: 12px;
+}
+.extraction-status strong {
+  text-transform: capitalize;
+}
+.manual-import {
+  border-top: 1px solid #e3e5dc;
+  margin-top: 28px;
+  padding-top: 20px;
+}
+.manual-import summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 18px;
+}
+#source-port {
+  max-width: 140px;
+}
+
+.import-grid {
+  align-items: start;
+}

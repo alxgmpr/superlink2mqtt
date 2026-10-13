@@ -5,3 +5,4 @@ PyYAML==6.0.3
 PyNaCl==1.6.2
 websockets==16.0
 paho-mqtt==2.1.0
+paramiko==4.0.0

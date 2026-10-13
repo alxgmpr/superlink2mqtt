@@ -155,25 +155,104 @@
           </div>
           <div class="import-grid">
             <div class="panel form-panel">
-              <div class="step">01 / SELECT YOUR EXPORT</div>
-              <h2>Import sensor keys</h2>
+              <div class="step">01 / CONNECT YOUR EXISTING GATEWAY</div>
+              <h2>Bring your keys with you</h2>
               <p>
-                Choose a version 1 migration JSON file or a complete Ubiquiti
-                <code>addDevice</code> request with its current key pair.
+                Connect to your Ubiquiti SuperLink gateway over SSH. Keep its
+                UniFi controller connected while we collect the current adoption
+                keys.
               </p>
-              <label class="file-label" for="import-file"
-                >Choose a JSON file<input
-                  id="import-file"
-                  type="file"
-                  accept=".json,application/json" /></label
-              ><label for="import-json">Or paste your export</label
-              ><textarea
-                id="import-json"
-                spellcheck="false"
-                rows="9"
-                placeholder='{"version": 1, "devices": […]}'
-              ></textarea
-              ><button id="preview" class="primary">Review import →</button>
+              <form id="extraction-probe-form">
+                <label for="source-host">Gateway LAN IP address</label>
+                <input
+                  id="source-host"
+                  placeholder="192.168.1.20"
+                  required
+                  autocomplete="off"
+                />
+                <label for="source-port">SSH port</label>
+                <input
+                  id="source-port"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value="22"
+                  required
+                />
+                <button id="probe-source" class="secondary" type="submit">
+                  Check gateway →
+                </button>
+              </form>
+              <div id="source-identity" hidden>
+                <p class="fine">
+                  Verify this fingerprint against your gateway's trusted SSH
+                  host key before sending credentials.
+                </p>
+                <code id="source-fingerprint" class="fingerprint"></code>
+                <label class="check"
+                  ><input id="confirm-source" type="checkbox" /> I verified the
+                  fingerprint and approve a brief interruption to sensor
+                  service.</label
+                >
+              </div>
+              <div id="source-credentials" hidden>
+                <label for="source-user">SSH username</label>
+                <input
+                  id="source-user"
+                  autocomplete="off"
+                  placeholder="Your gateway's SSH username"
+                />
+                <label for="source-password">SSH password</label>
+                <input
+                  id="source-password"
+                  type="password"
+                  autocomplete="off"
+                />
+                <p class="fine">
+                  Credentials are used for this connection only. The gateway's
+                  normal service is restored after capture.
+                </p>
+                <button id="extract-keys" class="primary" disabled>
+                  Extract sensor keys →
+                </button>
+                <button id="recover-source" class="secondary" hidden>
+                  Restore and verify source gateway
+                </button>
+              </div>
+              <div
+                id="extraction-status"
+                class="extraction-status"
+                role="status"
+                hidden
+              ></div>
+              <button id="review-extraction" class="secondary" hidden>
+                Review extracted sensors →
+              </button>
+              <p class="fine">
+                Supports the ARMv7 SuperLink gateway. Firmware compatibility is
+                checked before capture.
+              </p>
+              <details class="manual-import">
+                <summary>Already have a migration export?</summary>
+                <h2>Import sensor keys</h2>
+                <p>
+                  Choose a version 1 migration JSON file or a complete Ubiquiti
+                  <code>addDevice</code> request with its current key pair.
+                </p>
+                <label class="file-label" for="import-file"
+                  >Choose a JSON file<input
+                    id="import-file"
+                    type="file"
+                    accept=".json,application/json" /></label
+                ><label for="import-json">Or paste your export</label
+                ><textarea
+                  id="import-json"
+                  spellcheck="false"
+                  rows="9"
+                  placeholder='{"version": 1, "devices": […]}'
+                ></textarea
+                ><button id="preview" class="secondary">Review import →</button>
+              </details>
             </div>
             <div class="panel form-panel">
               <div class="step">02 / REVIEW & CONNECT</div>
@@ -199,7 +278,8 @@
           <div class="banner subtle">
             Use persistent <code>key</code> and <code>fallbackKey</code> values.
             Temporary session keys cannot restore a sensor after reconnect.
-            Automatic extraction from UniFi is not available in this release.
+            Extracted keys stay on this server and expire after 10 minutes. No
+            factory reset is needed.
           </div>
         </section>
         <section id="page-activity" hidden>
