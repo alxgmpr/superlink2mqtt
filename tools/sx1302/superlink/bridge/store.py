@@ -3,6 +3,9 @@ from __future__ import annotations
 import abc
 import json
 import os
+import tempfile
+import threading
+from pathlib import Path
 from dataclasses import dataclass, asdict, fields
 
 
@@ -71,29 +74,92 @@ class InMemoryDeviceStore(DeviceStore):
         self._records.pop(mac, None)
 
 
+class StoreError(ValueError):
+    """Stored device keys cannot be loaded safely."""
+
+
+def _validate_records(data: dict) -> None:
+    if not isinstance(data, dict):
+        raise ValueError("expected a device map")
+    for mac, value in data.items():
+        record = _from_json(value)
+        if len(record.mac) != 6 or record.mac.hex() != mac:
+            raise ValueError("invalid device identity")
+        for field in _BYTES_FIELDS[1:]:
+            key = getattr(record, field)
+            if key is not None and len(key) != 32:
+                raise ValueError("invalid key length")
+
+
 class JsonDeviceStore(DeviceStore):
+    """Atomic local store. One daemon owns the file; its threads share this instance.
+
+    The .bak file is the previous validated snapshot. Recovery is explicit:
+    automatically restoring it could resurrect a removed device or stale keys.
+    """
     def __init__(self, path: str):
-        self.path = path
+        self.path = os.path.abspath(path)
+        self.backup_path = self.path + ".bak"
+        self._lock = threading.RLock()
 
     def _read(self) -> dict[str, dict]:
-        if not os.path.exists(self.path):
+        try:
+            with open(self.path) as f:
+                data = json.load(f)
+            _validate_records(data)
+            return data
+        except FileNotFoundError:
+            if os.path.exists(self.backup_path):
+                raise StoreError(f"device store {self.path} missing; inspect backup "
+                                 f"{self.backup_path} before restoring") from None
             return {}
-        with open(self.path) as f:
-            return json.load(f)
+        except (ValueError, TypeError, AttributeError, KeyError) as exc:
+            raise StoreError(f"invalid device store {self.path}; preserve it and "
+                             f"inspect backup {self.backup_path} before restoring") from exc
 
-    def _write(self, data: dict[str, dict]) -> None:
-        with open(self.path, "w") as f:
-            json.dump(data, f, indent=2)
+    @staticmethod
+    def _atomic_write(path: str, data: dict) -> None:
+        directory = os.path.dirname(path)
+        temporary = None
+        try:
+            # NamedTemporaryFile creates the key-bearing file with mode 0600.
+            with tempfile.NamedTemporaryFile(mode="w", dir=directory,
+                                             prefix=".superlink-", delete=False) as f:
+                temporary = f.name
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, path)
+            # Persist the rename as well as the contents on POSIX filesystems.
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if temporary is not None:
+                Path(temporary).unlink(missing_ok=True)
+
+    def _write(self, data: dict[str, dict], previous: dict) -> None:
+        _validate_records(data)
+        if os.path.exists(self.path):
+            self._atomic_write(self.backup_path, previous)
+        self._atomic_write(self.path, data)
 
     def load_all(self) -> list[DeviceRecord]:
-        return [_from_json(v) for v in self._read().values()]
+        with self._lock:
+            return [_from_json(v) for v in self._read().values()]
 
     def save(self, record: DeviceRecord) -> None:
-        data = self._read()
-        data[record.mac.hex()] = _to_json(record)
-        self._write(data)
+        with self._lock:
+            previous = self._read()
+            data = dict(previous)
+            data[record.mac.hex()] = _to_json(record)
+            self._write(data, previous)
 
     def delete(self, mac: bytes) -> None:
-        data = self._read()
-        data.pop(mac.hex(), None)
-        self._write(data)
+        with self._lock:
+            previous = self._read()
+            data = dict(previous)
+            data.pop(mac.hex(), None)
+            self._write(data, previous)

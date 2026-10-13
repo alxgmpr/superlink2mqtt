@@ -2,6 +2,8 @@
 # Setup script for SuperLink sniffer on RPi with SX1302 CoreCell
 set -e
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
 echo "=== Installing system packages ==="
 sudo apt-get update
 sudo apt-get install -y libsodium-dev python3-venv
@@ -10,7 +12,7 @@ echo "=== Creating Python venv ==="
 cd ~
 python3 -m venv superlink-venv
 source ~/superlink-venv/bin/activate
-pip install pysodium
+python -m pip install "$REPO_ROOT[mqtt]"
 
 echo "=== Building libloragw.so ==="
 cd ~/sx1302_hal

@@ -18,6 +18,63 @@ documentation; packet sniffing also works standalone on a Heltec v3.
 
 <img width="1028" height="781" alt="image" src="https://github.com/user-attachments/assets/e16ffbb9-7369-461f-b2e1-0df24a7cf506" />
 
+## Bridge installation
+
+Requires Python 3.12+, libsodium, and a configured SX1302 HAL on the Pi.
+From a clone of this repository:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install '.[mqtt]'
+cp tools/sx1302/superlink_bridge.yaml.example superlink_bridge.yaml
+# Edit gateway identity, allowed sensors, store path, and MQTT broker.
+superlink-bridged --config superlink_bridge.yaml
+```
+
+For the existing Pi HAL checkout, `tools/sx1302/setup_rpi.sh` installs the
+bridge and MQTT dependencies into `~/superlink-venv` and builds the HAL.
+The HAL checkout must already exist at `~/sx1302_hal`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the test environment.
+
+## MQTT recovery
+
+MQTT connects asynchronously and retries in the background, so a broker outage
+does not prevent radio polling. On reconnect, the bridge restores subscriptions,
+discovery, and the latest retained values observed during this daemon run.
+Physical button events are not replayed. Retained inbound commands are ignored;
+publish commands without retention, with `PRESS` for command buttons.
+
+Discovery requires both bridge and device availability. Restored devices start
+offline until their radio sessions recover. Graceful shutdown waits up to two
+seconds for the broker to acknowledge bridge-offline; an unexpected disconnect
+uses the last will. These follow the
+[paho connection lifecycle](https://eclipse.dev/paho/files/paho.mqtt.python/html/client.html)
+and [HA availability rules](https://www.home-assistant.io/integrations/sensor.mqtt/).
+
+Set `mqtt.tls: true` and the broker's TLS port (usually 8883) to use certificate
+and hostname verification with the system trust store. There is no insecure
+certificate bypass. Custom CA/client-certificate configuration is not yet exposed.
+
+The retained-value cache is in memory: a simultaneous daemon and broker state
+loss requires fresh sensor reports to rebuild property discovery. Removal also
+still cannot retract property topics published only by an earlier daemon run.
+Neither queued sensor commands nor transient button events are durable.
+
+## Device-key persistence
+
+The bridge writes its JSON device store atomically with owner-only permissions,
+flushes the file and directory, and keeps the previous validated snapshot as
+`<store_path>.bak`. One daemon must own a store; do not run the probe and bridge
+against the same store concurrently. Back up both files privately.
+
+A malformed store (or a missing store with a backup still present) stops startup
+rather than silently forgetting sensors. To recover, stop the daemon, preserve
+both files, inspect the backup's device identities and adoption state, then
+restore it to the configured store path with mode `0600`. The backup is one
+version old and may contain removed devices or superseded keys; restoring it
+may require re-pairing. Never post either file in an issue.
+
 ## What is SuperLink?
 
 SuperLink is Ubiquiti's proprietary long-range wireless protocol used in UniFi Access, UniFi Connect, UniFi SmartPower, and gateway products. It uses standard Semtech LoRa chirp spread spectrum modulation but a completely proprietary MAC layer with custom framing, encryption, and device management. It is not LoRaWAN.

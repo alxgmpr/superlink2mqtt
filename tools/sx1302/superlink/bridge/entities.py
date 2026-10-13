@@ -63,6 +63,16 @@ def _device_block(machex: str) -> dict:
     }
 
 
+def _availability(base_topic: str, machex: str) -> dict:
+    return {
+        "availability_mode": "all",
+        "availability": [
+            {"topic": f"{base_topic}/bridge/availability"},
+            {"topic": f"{base_topic}/{machex}/availability"},
+        ],
+    }
+
+
 def button_discovery_config(mac: bytes, name: str, base_topic: str,
                             discovery_prefix: str):
     """HA MQTT-discovery config for a command button (LOCATE/REBOOT/refresh)."""
@@ -75,7 +85,7 @@ def button_discovery_config(mac: bytes, name: str, base_topic: str,
         "object_id": uid,
         "command_topic": f"{base_topic}/{machex}/{name}/press",
         "payload_press": "PRESS",
-        "availability_topic": f"{base_topic}/{machex}/availability",
+        **_availability(base_topic, machex),
         "payload_available": "online",
         "payload_not_available": "offline",
         "device": _device_block(machex),
@@ -94,7 +104,6 @@ def discovery_config(mac: bytes, name: str, entity: dict, base_topic: str,
     component = entity["component"]
     uid = f"{machex}_{name}"
     state_topic = f"{base_topic}/{machex}/{name}"
-    avail_topic = f"{base_topic}/{machex}/availability"
     config_topic = f"{discovery_prefix}/{component}/{uid}/config"
 
     payload = {
@@ -102,7 +111,7 @@ def discovery_config(mac: bytes, name: str, entity: dict, base_topic: str,
         "unique_id": uid,
         "object_id": uid,
         "state_topic": state_topic,
-        "availability_topic": avail_topic,
+        **_availability(base_topic, machex),
         "payload_available": "online",
         "payload_not_available": "offline",
         "device": _device_block(machex),

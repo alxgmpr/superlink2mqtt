@@ -22,12 +22,26 @@ def test_start_transitions_to_beaconing():
     assert session.state == State.BEACONING
 
 
-def test_beacon_due():
-    """Beacon should be due immediately after start."""
+@pytest.mark.parametrize("start_time", [0.0, 1_000_000.0])
+def test_beacon_due(monkeypatch, start_time):
+    """Legacy beacon timing depends on elapsed time, not the host's uptime."""
     gw_mac = bytes.fromhex("AABBCCDDEEFF")
-    session = GatewaySession(gw_mac=gw_mac, pairing_key=DEFAULT_PAIRING_KEY)
-    session.start()
+    session = GatewaySession(gw_mac=gw_mac, pairing_key=DEFAULT_PAIRING_KEY,
+                             beacon_interval=10.0)
+    now = start_time
+    monkeypatch.setattr("superlink.bridge.session.time.monotonic", lambda: now)
+    session.start(now=now)
+    assert not session.beacon_due()
+    now += 9.0
+    assert not session.beacon_due()
+    now += 1.0
     assert session.beacon_due()
+    session.build_beacon()
+    assert not session.beacon_due()
+    now += 10.0
+    assert session.beacon_due()
+    session.state = State.ACTIVE
+    assert not session.beacon_due()
 
 
 def test_build_beacon():
@@ -547,3 +561,22 @@ def test_unadopted_form_0x40_does_not_rotate():
     assert session._adopt_pending is True
     assert session._kdf_context == default_ctx
     assert session._transport_key == DEFAULT_PAIRING_KEY
+
+
+@pytest.mark.parametrize("clock_start", [0.0, 10.0, 1000.0])
+def test_legacy_first_beacon_due(monkeypatch, clock_start):
+    """Legacy first beacon is immediate even on a freshly booted host."""
+    now = clock_start
+    monkeypatch.setattr("superlink.bridge.session.time.monotonic", lambda: now)
+    gw_mac = bytes.fromhex("AABBCCDDEEFF")
+    session = GatewaySession(gw_mac=gw_mac, pairing_key=DEFAULT_PAIRING_KEY)
+    session.start()
+    assert session.beacon_due()
+    session.build_beacon()
+    assert not session.beacon_due()
+    now += session.beacon_interval - 1
+    assert not session.beacon_due()
+    now += 1
+    assert session.beacon_due()
+    session.state = State.ACTIVE
+    assert not session.beacon_due()

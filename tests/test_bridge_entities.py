@@ -24,7 +24,9 @@ def test_discovery_config_binary_sensor():
     assert payload["name"] == "Leak"                # not the ALL_CAPS id
     assert payload["unique_id"] == "9041b22e9a53_LEAK_DETECTED"
     assert payload["object_id"] == "9041b22e9a53_LEAK_DETECTED"
-    assert payload["availability_topic"] == "superlink/9041b22e9a53/availability"
+    assert payload["availability_mode"] == "all"
+    assert {v["topic"] for v in payload["availability"]} == {
+        "superlink/bridge/availability", "superlink/9041b22e9a53/availability"}
     assert payload["device"]["identifiers"] == ["9041b22e9a53"]
     assert "command_topic" not in payload           # not a switch
 
