@@ -25,6 +25,31 @@ from tests.support.sensor_peer import (SENSOR_MAC, GW_MAC, PRIMARY_KEY, FALLBACK
 TOKEN = "test-web-token-never-a-real-secret-12345"
 
 
+def test_ingress_requires_explicit_mode_and_supervisor_peer():
+    from superlink.bridge.web import is_ingress
+    assert not is_ingress(WebConfig(TOKEN), "172.30.32.2")
+    config = WebConfig(TOKEN, ingress=True)
+    assert is_ingress(config, "172.30.32.2")
+    assert not is_ingress(config, "127.0.0.1")
+    assert not is_ingress(config, "172.30.33.5")
+
+
+def test_ingress_port_rejects_direct_clients_even_with_token():
+    rt = runtime()
+    web = ManagementServer(rt, WebConfig(TOKEN, port=0, ingress=True))
+    web.start()
+    try:
+        for method, path in [("GET", "/"), ("GET", "/api/session"),
+                             ("GET", "/api/state"), ("POST", "/api/import")]:
+            conn = http.client.HTTPConnection(*web.address)
+            conn.request(method, path, headers={"Authorization": f"Bearer {TOKEN}",
+                                               "X-Forwarded-For": "172.30.32.2"})
+            assert conn.getresponse().status == 403
+            conn.close()
+    finally:
+        web.stop()
+
+
 def bundle(mac=None):
     return {"version": 1, "devices": [{"mac": (mac or SENSOR_MAC).hex(),
         "key": PRIMARY_KEY.hex(), "fallbackKey": FALLBACK_KEY.hex(),
@@ -198,6 +223,20 @@ def test_http_auth_origin_limits_and_safe_static_paths():
         assert code == 200 and b"superlink" in body
         assert "Content-Security-Policy" in headers
         assert headers["Cache-Control"] == "no-store"
+
+
+def test_ingress_bootstrap_and_api_use_supervisor_auth(monkeypatch):
+    import superlink.bridge.web as module
+    # Peer filtering is tested separately; emulate the verified ingress peer.
+    monkeypatch.setattr(module, "is_ingress", lambda config, peer: config.ingress)
+    with running_web() as (_, web):
+        web.config.ingress = True
+        status, body, _ = request(web, "GET", "/api/session", token=None)
+        assert status == 200 and json.loads(body) == {"ingress": True}
+        assert request(web, "GET", "/api/state", token=None)[0] == 200
+        status, body, _ = request(web, "POST", "/api/import/preview",
+                                  {"document": bundle()}, token=None)
+        assert status == 200 and json.loads(body)["can_import"]
 
 
 def test_http_preview_import_conflict_command_and_state():

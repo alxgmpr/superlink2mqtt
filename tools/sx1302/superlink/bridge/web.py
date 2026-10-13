@@ -20,6 +20,11 @@ ASSETS = Path(__file__).with_name("frontend")
 MAX_BODY = 128 * 1024
 
 
+def is_ingress(config, peer):
+    # Trust the TCP peer, never a client-controlled forwarding header.
+    return config.ingress and peer == "172.30.32.2"
+
+
 class ManagementServer:
     def __init__(self, runtime, config):
         self.management = Management(runtime)
@@ -51,6 +56,8 @@ class ManagementServer:
                 self.wfile.write(body)
 
             def authorized(self):
+                if is_ingress(owner.config, self.client_address[0]):
+                    return True
                 supplied = self.headers.get("Authorization", "")
                 if not hmac.compare_digest(supplied.encode(), f"Bearer {owner.config.token}".encode()):
                     self.reply(401, {"error": "Enter a valid access token"})
@@ -97,7 +104,13 @@ class ManagementServer:
                     self.reply(500, {"error": "Extraction operation failed"})
 
             def do_GET(self):
+                if owner.config.ingress and not is_ingress(owner.config, self.client_address[0]):
+                    self.reply(403, {"error": "Use Home Assistant ingress"})
+                    return
                 path = urlsplit(self.path).path
+                if path == "/api/session":
+                    self.reply(200, {"ingress": is_ingress(owner.config, self.client_address[0])})
+                    return
                 if path == "/favicon.ico":
                     self.reply(204, b"", "image/x-icon")
                     return
@@ -119,6 +132,9 @@ class ManagementServer:
                 self.reply(200, (ASSETS / name).read_bytes(), mime)
 
             def do_POST(self):
+                if owner.config.ingress and not is_ingress(owner.config, self.client_address[0]):
+                    self.reply(403, {"error": "Use Home Assistant ingress"})
+                    return
                 if not self.authorized():
                     return
                 if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":

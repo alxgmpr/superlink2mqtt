@@ -277,9 +277,13 @@ def main(argv=None):
         return
     config = RuntimeConfig.load(args.config)
     logging.basicConfig(level=getattr(logging, config.log_level, logging.INFO))
-    runtime = build_runtime(config, SX1302(lib_path=config.hal_library,
-                                         spi_path=config.spi_path.encode(),
-                                         reset_script=config.reset_script))
+    if config.radio is not None:
+        from ..radio_remote import RemoteSX1302
+        hal = RemoteSX1302(config.radio)
+    else:
+        hal = SX1302(lib_path=config.hal_library, spi_path=config.spi_path.encode(),
+                     reset_script=config.reset_script)
+    runtime = build_runtime(config, hal)
     previous_sigterm = signal.signal(signal.SIGTERM, lambda *_: runtime.stop())
     control = mqtt_bridge = web = None
     try:

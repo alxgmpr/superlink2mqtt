@@ -88,3 +88,16 @@ def test_control_socket_disabled(tmp_path):
     c = RuntimeConfig.load(_write(
         tmp_path, 'gw_mac: "010203040506"\nadopt: all\ncontrol_socket: null\n'))
     assert c.control_socket is None
+
+
+def test_remote_radio_configuration(tmp_path):
+    c = RuntimeConfig.load(_write(tmp_path, YAML_ALL + '''
+radio:
+  host: 192.0.2.1
+  username: radio
+  key_file: /config/radio_ed25519
+  known_hosts: /config/known_hosts
+'''))
+    assert c.radio.host == "192.0.2.1"
+    assert c.radio.port == 22
+    assert RuntimeConfig.load(_write(tmp_path, YAML_ALL)).radio is None

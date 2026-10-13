@@ -4,6 +4,13 @@ gw_mac: "010203040506"        # this bridge's 6-byte gateway MAC (hex)
 # hal_library: "/opt/sx1302_hal/libloragw/libloragw.so"
 # spi_path: "/dev/spidev0.0"
 # reset_script: "/opt/sx1302_hal/tools/reset_lgw.sh"
+# Or keep the SX1302 on a Pi and run this daemon elsewhere over pinned SSH:
+# radio:
+#   host: "192.168.1.20"
+#   username: "alex"
+#   port: 22
+#   key_file: "/data/radio_ed25519"
+#   known_hosts: "/data/known_hosts"
 pairing_key: null             # null => Ubiquiti factory-default pairing key
 store_path: "superlink_devices.json"
 adopt:                        # sensor MACs this bridge owns; or the string: all

@@ -4,7 +4,8 @@
 directly, publish their state, and get Home Assistant entities via MQTT
 discovery, with no UniFi controller anywhere in the loop.
 
-It runs on a Raspberry Pi with an SX1302 concentrator: the bridge pairs with a
+It runs on Home Assistant with a Raspberry Pi as an SSH-connected SX1302 radio,
+or entirely on a Pi. The bridge pairs with a
 factory-default sensor over the air, decodes its application-layer reports, and
 maps them to HA entities (door/motion/leak/tamper, battery, signal, button
 presses) plus command buttons (locate, reboot, refresh, clear tamper). See
@@ -16,8 +17,10 @@ Install with `python -m pip install .`, then run `superlink-bridged --demo` to
 preview it without hardware. See [management setup and migration](docs/MANAGEMENT_UI.md)
 for installation, guided migration from existing Ubiquiti gateways, supported
 import formats and current
-limitations. Automatic UniFi key extraction and a Ubiquiti gateway backend are
-not yet included.
+limitations. A Ubiquiti gateway radio backend is not yet included.
+
+For the Home Assistant container and Pi radio split, see
+[Home Assistant setup](homeassistant/superlink2mqtt/DOCS.md).
 
 The protocol underneath is Ubiquiti's proprietary SuperLink — a LoRa-based
 sub-GHz radio system on 915 MHz (US ISM band), reverse engineered from firmware

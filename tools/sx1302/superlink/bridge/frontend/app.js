@@ -165,7 +165,14 @@ function render() {
     $("activity").append(el("div", "No events.", "empty"));
   $("gateway-details").replaceChildren();
   for (const [label, value] of [
-    ["Backend", state.demo ? "SX1302 (demo)" : "SX1302"],
+    [
+      "Backend",
+      state.demo
+        ? "SX1302 (demo)"
+        : state.backend === "sx1302-ssh"
+          ? "SX1302 / SSH"
+          : "SX1302",
+    ],
     ["MAC", state.gateway_mac],
     ["MQTT", state.mqtt],
   ])
@@ -258,15 +265,14 @@ document
   .forEach((button) =>
     button.addEventListener("click", () => page(button.dataset.page)),
   );
-$("login-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  token = $("token").value.trim();
+async function unlock(ingress = false) {
+  token = ingress ? "ingress" : $("token").value.trim();
   try {
     state = await api("state");
     $("token").value = "";
     $("login").hidden = true;
     $("workspace").hidden = false;
-    $("lock").hidden = false;
+    $("lock").hidden = ingress;
     notice("");
     render();
     await pollExtraction();
@@ -275,7 +281,17 @@ $("login-form").addEventListener("submit", async (event) => {
   } catch (error) {
     notice(error.message);
   }
+}
+$("login-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  unlock();
 });
+fetch("api/session")
+  .then((response) => response.json())
+  .then((session) => {
+    if (session.ingress) unlock(true);
+  })
+  .catch(() => {});
 $("lock").addEventListener("click", lock);
 $("search").addEventListener("input", () => {
   if (state) renderDevices();

@@ -2,7 +2,11 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 import os
+from typing import TYPE_CHECKING
 import yaml
+
+if TYPE_CHECKING:
+    from ..radio_remote import RemoteRadioConfig
 
 # Documented Ubiquiti factory-default pairing key (docs/protocol/crypto_and_pairing.md).
 DEFAULT_PAIRING_KEY = bytes.fromhex(
@@ -17,8 +21,11 @@ class WebConfig:
     token: str = field(repr=False)
     host: str = "127.0.0.1"
     port: int = 8099
+    ingress: bool = False
 
     def __post_init__(self):
+        if type(self.ingress) is not bool:
+            raise ValueError("web.ingress must be a boolean")
         if (not isinstance(self.token, str) or len(self.token) < 32
                 or any(not 33 <= ord(c) <= 126 for c in self.token)):
             raise ValueError("Web access token must contain at least 32 printable ASCII characters without spaces")
@@ -53,6 +60,7 @@ class RuntimeConfig:
     mqtt: "MqttConfig | None" = None
     control_socket: str | None = None
     web: WebConfig | None = None
+    radio: RemoteRadioConfig | None = None
     hal_library: str = field(default_factory=lambda: os.path.expanduser(
         "~/sx1302_hal/libloragw/libloragw.so"))
     spi_path: str = "/dev/spidev0.0"
@@ -104,7 +112,12 @@ class RuntimeConfig:
                 raise ValueError("web.token_env must name an environment variable")
             web = WebConfig(token=os.environ.get(token_env, ""),
                             host=web_doc.get("host", "127.0.0.1"),
-                            port=web_doc.get("port", 8099))
+                            port=web_doc.get("port", 8099),
+                            ingress=web_doc.get("ingress", False))
+        radio = None
+        if doc.get("radio") is not None:
+            from ..radio_remote import RemoteRadioConfig
+            radio = RemoteRadioConfig(**doc["radio"])
         mqtt = None
         if mqtt_doc is not None:
             if "host" not in mqtt_doc:
@@ -132,6 +145,7 @@ class RuntimeConfig:
             mqtt=mqtt,
             control_socket=control_socket,
             web=web,
+            radio=radio,
             hal_library=os.path.expanduser(doc.get("hal_library", "~/sx1302_hal/libloragw/libloragw.so")),
             spi_path=doc.get("spi_path", "/dev/spidev0.0"),
             reset_script=os.path.expanduser(doc.get("reset_script", "~/sx1302_hal/tools/reset_lgw.sh")),

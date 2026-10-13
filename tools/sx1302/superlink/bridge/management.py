@@ -63,7 +63,8 @@ class Management:
                 "properties": list(seen.get("properties", {}).values()),
             })
         mqtt = self.runtime.mqtt_bridge
-        return {"demo": self.runtime.demo, "backend": "sx1302",
+        return {"demo": self.runtime.demo,
+                "backend": "sx1302-ssh" if self.runtime.config.radio else "sx1302",
                 "gateway_mac": self.runtime.config.gw_mac.hex(),
                 "mqtt": "connected" if mqtt and mqtt.client.is_connected() else
                         ("disconnected" if self.runtime.config.mqtt else "disabled"),
