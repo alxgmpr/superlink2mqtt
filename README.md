@@ -37,6 +37,20 @@ bridge and MQTT dependencies into `~/superlink-venv` and builds the HAL.
 The HAL checkout must already exist at `~/sx1302_hal`.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the test environment.
 
+## Device-key persistence
+
+The bridge writes its JSON device store atomically with owner-only permissions,
+flushes the file and directory, and keeps the previous validated snapshot as
+`<store_path>.bak`. One daemon must own a store; do not run the probe and bridge
+against the same store concurrently. Back up both files privately.
+
+A malformed store (or a missing store with a backup still present) stops startup
+rather than silently forgetting sensors. To recover, stop the daemon, preserve
+both files, inspect the backup's device identities and adoption state, then
+restore it to the configured store path with mode `0600`. The backup is one
+version old and may contain removed devices or superseded keys; restoring it
+may require re-pairing. Never post either file in an issue.
+
 ## What is SuperLink?
 
 SuperLink is Ubiquiti's proprietary long-range wireless protocol used in UniFi Access, UniFi Connect, UniFi SmartPower, and gateway products. It uses standard Semtech LoRa chirp spread spectrum modulation but a completely proprietary MAC layer with custom framing, encryption, and device management. It is not LoRaWAN.
