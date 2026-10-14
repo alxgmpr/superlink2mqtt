@@ -3,187 +3,171 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
-    <title>superlink2mqtt / devices</title>
+    <title>SuperLink · superlink2mqtt</title>
     <link rel="stylesheet" href="style.css" />
     <script src="app.js" defer></script>
   </head>
   <body>
-    <header class="topbar">
-      <a class="brand" href="./">&gt; superlink2mqtt</a>
-      <nav aria-label="Navigation">
-        <button class="nav active" data-page="devices" aria-current="page">
-          devices
+    <header class="appbar">
+      <div class="appbar-row">
+        <h1>SuperLink</h1>
+        <span class="chip" id="mqtt-chip" hidden
+          ><span class="dot"></span><span>MQTT</span></span
+        >
+        <span class="chip" id="demo-chip" hidden>Demo · read-only</span>
+        <button id="lock" class="icon-button" title="Lock" aria-label="Lock" hidden>
+          ⏻
         </button>
-        <button class="nav" data-page="import">import</button>
-        <button class="nav" data-page="activity">activity</button>
-        <button class="nav" data-page="setup">gateway</button>
+      </div>
+      <nav class="tabs" role="tablist" id="tabs" hidden>
+        <button class="tab" role="tab" data-tab="devices">Devices</button>
+        <button class="tab" role="tab" data-tab="import">Import</button>
+        <button class="tab" role="tab" data-tab="activity">Activity</button>
+        <button class="tab" role="tab" data-tab="gateway">Gateway</button>
       </nav>
-      <div class="connection">
-        <span id="connection">locked</span
-        ><button id="lock" hidden>lock</button>
-      </div>
     </header>
+
     <main>
-      <div id="notice" role="status" hidden></div>
-      <section id="login" class="login panel">
-        <h1>connect</h1>
+      <section id="login" class="card login">
         <form id="login-form">
-          <label for="token">Access token</label>
-          <input id="token" type="password" autocomplete="off" required />
-          <button class="primary" type="submit">Unlock</button>
+          <div class="card-header">Unlock</div>
+          <div class="card-content">
+            <label class="field"
+              ><span>Access token (SUPERLINK_WEB_TOKEN)</span
+              ><input id="token" type="password" autocomplete="off" required
+            /></label>
+          </div>
+          <div class="card-actions">
+            <button class="filled" type="submit">Unlock</button>
+          </div>
         </form>
-        <p class="fine">SUPERLINK_WEB_TOKEN</p>
       </section>
-      <div id="workspace" hidden>
-        <div class="page-heading">
-          <h1 id="breadcrumb">devices</h1>
-          <span id="demo-banner" class="banner" hidden>demo / read-only</span>
+
+      <section id="tab-devices" hidden>
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Search devices" aria-label="Search devices" />
+          <span class="secondary" id="device-count"></span>
         </div>
-        <section id="page-devices">
-          <div class="toolbar">
-            <div class="stats">
-              <span>devices <strong id="total">0</strong></span
-              ><span>seen &lt;1m <strong id="recent">0</strong></span
-              ><span>mqtt <strong id="mqtt-status">—</strong></span>
-            </div>
-            <input
-              id="search"
-              type="search"
-              placeholder="Filter name / MAC"
-              aria-label="Filter devices"
-            />
-            <button data-page="import">Import</button>
-          </div>
-          <div class="panel table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Device</th>
-                  <th>Status</th>
-                  <th>Battery</th>
-                  <th>Signal</th>
-                  <th>Seen</th>
-                </tr>
-              </thead>
-              <tbody id="devices"></tbody>
-            </table>
-            <div id="empty" class="empty" hidden>No devices.</div>
-          </div>
-        </section>
-        <section id="page-import" hidden>
-          <div class="import-grid">
-            <section class="panel form-panel">
-              <h2>01 / source</h2>
-              <form id="extraction-probe-form">
-                <div class="host-fields">
-                  <div>
-                    <label for="source-host">Gateway IP</label
-                    ><input
-                      id="source-host"
-                      placeholder="192.168.1.20"
-                      required
-                      autocomplete="off"
-                    />
+        <div class="grid" id="devices"></div>
+        <div class="card empty" id="devices-empty" hidden>
+          <p>No devices yet.</p>
+          <button class="filled" data-goto="import">Import sensors</button>
+        </div>
+      </section>
+
+      <section id="tab-import" class="import" hidden>
+        <div class="card">
+          <div class="card-header">Extract from a UniFi gateway</div>
+          <div class="card-content">
+            <ol class="steps">
+              <li id="step-connect">
+                <h3>Connect</h3>
+                <form id="probe-form">
+                  <div class="row">
+                    <label class="field"
+                      ><span>Gateway IP</span
+                      ><input id="source-host" placeholder="192.168.1.20" autocomplete="off" required
+                    /></label>
+                    <label class="field"
+                      ><span>SSH port</span
+                      ><input id="source-port" type="number" min="1" max="65535" value="22" required
+                    /></label>
                   </div>
-                  <div>
-                    <label for="source-port">Port</label
-                    ><input
-                      id="source-port"
-                      type="number"
-                      min="1"
-                      max="65535"
-                      value="22"
-                      required
-                    />
-                  </div>
+                  <button id="probe" type="submit">Check host key</button>
+                </form>
+              </li>
+              <li id="step-verify">
+                <h3>Verify</h3>
+                <div id="verify" hidden>
+                  <div class="callout"><code id="fingerprint"></code></div>
+                  <label class="check"
+                    ><input id="confirm-source" type="checkbox" /><span
+                      >The fingerprint matches my gateway. The SuperLink
+                      service may restart briefly.</span
+                    ></label
+                  >
                 </div>
-                <button id="probe-source" type="submit">Check SSH</button>
-              </form>
-              <div id="source-identity" hidden>
-                <code id="source-fingerprint" class="fingerprint"></code>
-                <label class="check"
-                  ><input id="confirm-source" type="checkbox" />Fingerprint
-                  verified. Allow brief service restart.</label
-                >
-              </div>
-              <div id="source-credentials" hidden>
-                <label for="source-user">SSH user</label
-                ><input id="source-user" autocomplete="off" />
-                <label for="source-password">SSH password</label
-                ><input
-                  id="source-password"
-                  type="password"
-                  autocomplete="off"
-                />
-                <button id="extract-keys" class="primary" disabled>
-                  Extract keys
-                </button>
-                <button id="recover-source" hidden>Restore gateway</button>
-              </div>
-              <div
-                id="extraction-status"
-                class="extraction-status"
-                role="status"
-                hidden
-              ></div>
-              <button id="review-extraction" hidden>Review keys</button>
-              <p class="fine">
-                ARMv7 gateway · root SSH · keep UniFi connected
-              </p>
-              <details class="manual-import">
-                <summary>Import JSON</summary>
-                <label for="import-file">File</label
-                ><input
-                  id="import-file"
-                  type="file"
-                  accept=".json,application/json"
-                />
-                <label for="import-json">JSON</label
-                ><textarea
-                  id="import-json"
-                  spellcheck="false"
-                  rows="6"
-                  placeholder='{"version": 1, "devices": […]}'
-                ></textarea>
-                <button id="preview">Review</button>
-              </details>
-            </section>
-            <section class="panel form-panel">
-              <h2>02 / import</h2>
-              <div id="preview-result"><p>No keys selected.</p></div>
-              <label class="check"
-                ><input id="confirm-import" type="checkbox" />Previous gateway
-                stopped.</label
-              >
-              <button id="apply-import" class="primary" disabled>Import</button>
-              <p class="fine">Extracted keys expire in 10m.</p>
-            </section>
+              </li>
+              <li id="step-extract">
+                <h3>Extract</h3>
+                <div id="credentials" hidden>
+                  <div class="row">
+                    <label class="field"
+                      ><span>SSH user</span><input id="source-user" value="root" autocomplete="off"
+                    /></label>
+                  </div>
+                  <label class="field"
+                    ><span>SSH password</span
+                    ><input id="source-password" type="password" autocomplete="off"
+                  /></label>
+                  <button id="extract" class="filled" disabled>Extract keys</button>
+                  <button id="recover" class="danger" hidden>Restore gateway</button>
+                </div>
+                <div id="job" class="callout" role="status" hidden></div>
+                <button id="review-job" class="filled" hidden>Review keys</button>
+              </li>
+            </ol>
+            <p class="secondary">
+              ARMv7 SuperLink gateway with root SSH. Keep it connected to UniFi
+              during capture.
+            </p>
+            <details>
+              <summary>Import a JSON key bundle instead</summary>
+              <label class="field"
+                ><span>File</span><input id="import-file" type="file" accept=".json,application/json"
+              /></label>
+              <label class="field"
+                ><span>JSON</span
+                ><textarea id="import-json" rows="6" spellcheck="false" placeholder='{"version": 1, "devices": […]}'></textarea>
+              </label>
+              <button id="review-json">Review</button>
+            </details>
           </div>
-        </section>
-        <section id="page-activity" hidden>
-          <div class="panel" id="activity"></div>
-        </section>
-        <section id="page-setup" hidden>
-          <div class="panel form-panel gateway-panel">
-            <dl id="gateway-details"></dl>
-            <button id="diagnostics">Download diagnostics</button>
-            <p class="fine">Edit YAML, then restart to change settings.</p>
-          </div>
-        </section>
-      </div>
-    </main>
-    <dialog id="device-dialog">
-      <div class="dialog-heading">
-        <div>
-          <h2 id="detail-name"></h2>
-          <code id="detail-mac"></code>
         </div>
-        <button id="close-detail" aria-label="Close device">×</button>
+
+        <div class="card">
+          <div class="card-header">Review &amp; import</div>
+          <ul class="list" id="preview"></ul>
+          <div class="card-content">
+            <label class="check"
+              ><input id="confirm-import" type="checkbox" /><span
+                >The previous gateway no longer manages these sensors.</span
+              ></label
+            >
+            <p class="secondary">Extracted keys stay on the server for 10 minutes.</p>
+          </div>
+          <div class="card-actions">
+            <button id="apply-import" class="filled" disabled>Import</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-activity" class="card" hidden>
+        <ul class="list" id="activity"></ul>
+      </section>
+
+      <section id="tab-gateway" class="card" hidden>
+        <ul class="list" id="gateway"></ul>
+        <div class="card-actions">
+          <span class="secondary grow">Edit the YAML and restart to change settings.</span>
+          <button id="diagnostics">Download diagnostics</button>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="dialog">
+      <div class="dialog-head">
+        <span class="icon" id="d-icon"></span>
+        <div>
+          <h2 id="d-name"></h2>
+          <div class="secondary" id="d-sub"></div>
+        </div>
+        <button class="icon-button" id="d-close" aria-label="Close">×</button>
       </div>
-      <div id="detail-readings" class="readings"></div>
-      <div class="actions" id="detail-actions"></div>
-      <p class="fine">Commands queue until the sensor wakes.</p>
+      <ul class="list" id="d-readings"></ul>
+      <div class="card-actions" id="d-actions"></div>
     </dialog>
+
+    <div id="toast" role="status" hidden></div>
   </body>
 </html>

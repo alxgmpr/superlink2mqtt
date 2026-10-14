@@ -1,33 +1,70 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
+const TABS = ["devices", "import", "activity", "gateway"];
+const IDLE_JOB = ["idle", "ready", "failed", "expired", "imported", "recovery_required"];
+const STATES = {
+  awaiting_reconnect: "Awaiting reconnect",
+  discovered: "Discovered",
+  adopting: "Pairing",
+  adopted: "Adopted",
+  active: "Connected",
+  lost: "Link lost",
+  beaconing: "Reconnecting",
+  idle: "Waiting",
+};
+const ICONS = {
+  door: "M7 2h10a1 1 0 0 1 1 1v18h2v2H4v-2h2V3a1 1 0 0 1 1-1zm1 2v17h8V4H8zm5 7h2v2h-2z",
+  temp: "M15 13V5a3 3 0 0 0-6 0v8a5 5 0 1 0 6 0zm-3-9a1 1 0 0 1 1 1v3h-2V5a1 1 0 0 1 1-1z",
+  radio:
+    "M12 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM7.05 7.05l1.41 1.41a5 5 0 0 0 0 7.08l-1.41 1.41a7 7 0 0 1 0-9.9zm9.9 0a7 7 0 0 1 0 9.9l-1.41-1.41a5 5 0 0 0 0-7.08zM4.22 4.22l1.42 1.42a9 9 0 0 0 0 12.72l-1.42 1.42a11 11 0 0 1 0-15.56zm15.56 0a11 11 0 0 1 0 15.56l-1.42-1.42a9 9 0 0 0 0-12.72z",
+};
+
 let token = "",
   state = null,
-  previewDocument = null,
-  previewJobId = null,
-  sourceProbe = null,
-  extractionState = { state: "idle" },
-  selectedMac = null,
   timer = null,
   refreshing = false,
-  previewVersion = 0;
+  selectedMac = null,
+  cardNodes = new Map(),
+  sourceProbe = null,
+  job = { state: "idle" },
+  preview = { version: 0, document: null, jobId: null };
+
+// ---- helpers ----------------------------------------------------------------
 function el(tag, text, className) {
   const node = document.createElement(tag);
-  if (text !== undefined) node.textContent = text;
+  if (text != null) node.textContent = text;
   if (className) node.className = className;
   return node;
 }
-function notice(message) {
-  $("notice").textContent = message;
-  $("notice").hidden = !message;
+function icon(name, off) {
+  const wrap = el("span", null, `icon${off ? " off" : ""}`);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  path.setAttribute("d", ICONS[name]);
+  svg.append(path);
+  wrap.append(svg);
+  return wrap;
+}
+function chip(text, dot) {
+  const node = el("span", null, "chip");
+  if (dot) node.append(el("span", null, `dot ${dot}`));
+  node.append(el("span", text));
+  return node;
+}
+let toastTimer = null;
+function toast(message) {
+  clearTimeout(toastTimer);
+  $("toast").textContent = message;
+  $("toast").hidden = !message;
+  if (message) toastTimer = setTimeout(() => ($("toast").hidden = true), 5000);
 }
 async function api(path, body) {
   const requestToken = token;
   const response = await fetch(`api/${path}`, {
     method: body === undefined ? "GET" : "POST",
-    headers: {
-      Authorization: `Bearer ${requestToken}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${requestToken}`, "Content-Type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(10000),
   });
@@ -38,147 +75,82 @@ async function api(path, body) {
   }
   return result;
 }
-function page(name) {
-  for (const item of ["devices", "import", "activity", "setup"])
-    $("page-" + item).hidden = item !== name;
-  document.querySelectorAll(".nav").forEach((node) => {
-    const active = node.dataset.page === name;
-    node.classList.toggle("active", active);
-    if (active) node.setAttribute("aria-current", "page");
-    else node.removeAttribute("aria-current");
-  });
-  $("breadcrumb").textContent = {
-    devices: "devices",
-    import: "import",
-    activity: "activity",
-    setup: "gateway",
-  }[name];
-  document.title = `superlink2mqtt / ${$("breadcrumb").textContent}`;
+const demo = () => state?.demo ?? true;
+const macLabel = (mac) => mac.match(/../g).join(":").toUpperCase();
+const online = (d) => ["active", "adopted"].includes(d.state);
+function age(ts) {
+  if (!ts) return "never";
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  if (s < 5) return "now";
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
 }
+const isBattery = (p) => ["BATTERY", "BATTERY_LEVEL"].includes(p.name);
+function format(p) {
+  if (typeof p.value === "boolean") return p.name === "MOTION" ? (p.value ? "Detected" : "Clear") : p.value ? "On" : "Off";
+  if (typeof p.value === "string") return p.value.charAt(0).toUpperCase() + p.value.slice(1);
+  return `${p.value}${p.unit ? (p.unit === "%" ? "%" : ` ${p.unit}`) : ""}`;
+}
+const label = (name) => name.charAt(0) + name.slice(1).replaceAll("_", " ").toLowerCase();
+function deviceIcon(d) {
+  const names = d.properties.map((p) => p.name).join(" ");
+  const kind = /DOOR|ENTRY/.test(names) ? "door" : /TEMP/.test(names) ? "temp" : "radio";
+  return icon(kind, !online(d));
+}
+
+// ---- navigation + session --------------------------------------------------
+function tab(name) {
+  for (const t of TABS) $(`tab-${t}`).hidden = t !== name;
+  document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
+}
+document.querySelectorAll("[data-tab],[data-goto]").forEach((b) =>
+  b.addEventListener("click", () => tab(b.dataset.tab || b.dataset.goto)),
+);
+
 function lock() {
   token = "";
   state = null;
   sourceProbe = null;
-  extractionState = { state: "idle" };
-  $("source-password").value = "";
-  $("source-identity").hidden = true;
-  $("source-credentials").hidden = true;
-  $("extraction-status").hidden = true;
-  $("review-extraction").hidden = true;
-  $("confirm-source").checked = false;
-  invalidatePreview();
+  job = { state: "idle" };
   clearTimeout(timer);
+  invalidatePreview();
+  for (const id of ["token", "source-password", "import-json", "import-file"]) $(id).value = "";
+  $("confirm-source").checked = false;
   $("login").hidden = false;
-  $("workspace").hidden = true;
-  $("lock").hidden = true;
-  $("connection").textContent = "locked";
-  $("token").value = "";
-  $("import-json").value = "";
-  $("import-file").value = "";
-  $("confirm-import").checked = false;
-  $("apply-import").disabled = true;
-  $("device-dialog").close();
+  $("tabs").hidden = $("lock").hidden = $("mqtt-chip").hidden = $("demo-chip").hidden = true;
+  for (const t of TABS) $(`tab-${t}`).hidden = true;
+  $("dialog").close();
+  renderJob();
 }
-function age(timestamp) {
-  if (!timestamp) return "—";
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - timestamp));
-  return seconds < 5
-    ? "now"
-    : seconds < 60
-      ? `${seconds}s ago`
-      : seconds < 3600
-        ? `${Math.floor(seconds / 60)}m ago`
-        : `${Math.floor(seconds / 3600)}h ago`;
-}
-function status(device) {
-  return (
-    {
-      awaiting_reconnect: "Awaiting reconnect",
-      discovered: "Discovered",
-      adopting: "Pairing",
-      adopted: "Adopted",
-      active: "Connected",
-      lost: "Link lost",
-      beaconing: "Reconnecting",
-      idle: "Waiting",
-    }[device.state] || device.state
-  );
-}
-function renderDevices() {
-  const query = $("search").value.trim().toLowerCase();
-  const devices = state.devices.filter((d) =>
-    `${d.name} ${d.mac}`.toLowerCase().includes(query),
-  );
-  $("devices").replaceChildren();
-  for (const d of devices) {
-    const row = el("tr"),
-      nameCell = el("td"),
-      button = el("button", undefined, "device-name");
-    const label = el("span", d.name);
-    label.append(el("small", d.mac.match(/../g).join(":").toUpperCase()));
-    button.append(label);
-    button.addEventListener("click", () => showDevice(d.mac));
-    nameCell.append(button);
-    const stateCell = el("td");
-    stateCell.append(
-      el(
-        "span",
-        status(d),
-        `state${["active", "adopted"].includes(d.state) ? "" : " waiting"}`,
-      ),
-    );
-    const battery = d.properties.find((p) =>
-      ["BATTERY", "BATTERY_LEVEL"].includes(p.name),
-    );
-    row.append(
-      nameCell,
-      stateCell,
-      el("td", battery ? `${battery.value}${battery.unit || "%"}` : "—"),
-      el("td", d.rssi == null ? "—" : `${d.rssi} dBm`),
-      el("td", age(d.last_seen)),
-    );
-    $("devices").append(row);
+$("lock").addEventListener("click", lock);
+
+async function unlock(ingress = false) {
+  token = ingress ? "ingress" : $("token").value.trim();
+  try {
+    state = await api("state");
+    $("token").value = "";
+    $("login").hidden = true;
+    $("tabs").hidden = false;
+    $("lock").hidden = ingress;
+    tab("devices");
+    render();
+    await pollJob();
+    clearTimeout(timer);
+    timer = setTimeout(refresh, 3000);
+  } catch (error) {
+    toast(error.message);
   }
-  $("empty").hidden = devices.length !== 0;
 }
-function render() {
-  $("total").textContent = state.devices.length;
-  $("recent").textContent = state.devices.filter(
-    (d) => d.last_seen && Date.now() / 1000 - d.last_seen < 60,
-  ).length;
-  $("mqtt-status").textContent = state.mqtt;
-  $("connection").textContent = state.demo ? "demo" : "connected";
-  $("demo-banner").hidden = !state.demo;
-  renderDevices();
-  $("activity").replaceChildren();
-  for (const item of state.activity) {
-    const row = el("div", undefined, "activity-row"),
-      text = el("div", item.message);
-    if (item.mac) text.append(el("code", item.mac));
-    row.append(
-      el("time", new Date(item.time * 1000).toLocaleTimeString()),
-      text,
-    );
-    $("activity").append(row);
-  }
-  if (!state.activity.length)
-    $("activity").append(el("div", "No events.", "empty"));
-  $("gateway-details").replaceChildren();
-  for (const [label, value] of [
-    [
-      "Backend",
-      state.demo
-        ? "SX1302 (demo)"
-        : state.backend === "sx1302-ssh"
-          ? "SX1302 / SSH"
-          : "SX1302",
-    ],
-    ["MAC", state.gateway_mac],
-    ["MQTT", state.mqtt],
-  ])
-    $("gateway-details").append(el("dt", label), el("dd", value));
-  if (selectedMac && $("device-dialog").open) fillDevice(selectedMac);
-}
+$("login-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  unlock();
+});
+fetch("api/session")
+  .then((r) => r.json())
+  .then((s) => s.ingress && unlock(true))
+  .catch(() => {});
+
 async function refresh() {
   if (refreshing || !token) return;
   refreshing = true;
@@ -189,311 +161,293 @@ async function refresh() {
     if (token !== requestToken) return;
     state = snapshot;
     render();
-    await pollExtraction();
+    await pollJob();
   } catch (error) {
-    notice(error.message);
-    $("connection").textContent = "disconnected";
+    toast(error.message);
+    $("mqtt-chip").replaceChildren(el("span", null, "dot error"), el("span", "Bridge offline"));
   } finally {
     refreshing = false;
     clearTimeout(timer);
     if (token) timer = setTimeout(refresh, 3000);
   }
 }
-function fillDevice(mac) {
-  const d = state.devices.find((item) => item.mac === mac);
-  if (!d) {
-    $("device-dialog").close();
-    return;
-  }
-  $("detail-name").textContent = d.name;
-  $("detail-mac").textContent = `${d.mac} · ${status(d)}`;
-  $("detail-readings").replaceChildren();
-  for (const p of d.properties) {
-    const item = el(
-      "div",
-      `${p.name.replaceAll("_", " ").toLowerCase()} · ch ${p.channel}`,
-      "reading",
-    );
-    item.append(el("strong", `${p.value}${p.unit ? " " + p.unit : ""}`));
-    $("detail-readings").append(item);
-  }
-  if (!d.properties.length)
-    $("detail-readings").append(el("p", "No readings."));
-  $("detail-actions").replaceChildren();
+
+// ---- rendering ---------------------------------------------------------------
+function render() {
+  const mqttDot = { connected: "ok", disconnected: "error" }[state.mqtt] || "";
+  $("mqtt-chip").replaceChildren(el("span", null, `dot ${mqttDot}`), el("span", `MQTT ${state.mqtt}`));
+  $("mqtt-chip").hidden = false;
+  $("demo-chip").hidden = !state.demo;
+  renderDevices();
+  renderActivity();
+  renderGateway();
+  renderJob();
+  if (selectedMac && $("dialog").open) fillDialog();
+}
+
+function renderDevices() {
+  const query = $("search").value.trim().toLowerCase();
+  const devices = state.devices.filter((d) => `${d.name} ${d.mac} ${macLabel(d.mac)}`.toLowerCase().includes(query));
+  const cards = devices.map((d) => {
+    // Reuse card nodes across polls so a click spanning a refresh still lands.
+    let card = cardNodes.get(d.mac);
+    if (!card) {
+      card = el("button", null, "card device");
+      card.addEventListener("click", () => openDialog(d.mac));
+      cardNodes.set(d.mac, card);
+    }
+    const head = el("div", null, "device-head");
+    const title = el("div");
+    title.append(el("div", d.name, "device-name"), el("div", STATES[d.state] || d.state, "secondary"));
+    head.append(deviceIcon(d), title);
+    const reading = d.properties.find((p) => !isBattery(p));
+    const battery = d.properties.find(isBattery);
+    const meta = el("div", null, "meta");
+    if (battery) meta.append(chip(`🔋 ${format(battery)}`));
+    if (d.rssi != null) meta.append(chip(`${d.rssi} dBm`));
+    meta.append(chip(age(d.last_seen), online(d) ? "ok" : d.state === "lost" ? "error" : "warn"));
+    card.replaceChildren(head, el("div", reading ? format(reading) : "—", "primary-reading"), meta);
+    return card;
+  });
+  const current = [...$("devices").children];
+  if (current.length !== cards.length || cards.some((c, i) => c !== current[i])) $("devices").replaceChildren(...cards);
+  $("devices-empty").hidden = state.devices.length !== 0;
+  const recent = state.devices.filter((d) => d.last_seen && Date.now() / 1000 - d.last_seen < 60).length;
+  $("device-count").textContent = state.devices.length ? `${state.devices.length} devices · ${recent} seen in last minute` : "";
+}
+$("search").addEventListener("input", () => state && renderDevices());
+
+function renderActivity() {
+  const rows = state.activity.map((item) => {
+    const li = el("li");
+    const text = el("div", item.message, "grow");
+    if (item.mac) text.append(el("div", macLabel(item.mac), "secondary"));
+    li.append(el("time", new Date(item.time * 1000).toLocaleTimeString()), text);
+    return li;
+  });
+  $("activity").replaceChildren(...(rows.length ? rows : [el("li", "No activity since the bridge started.", "empty")]));
+}
+
+function renderGateway() {
+  const backend = state.demo ? "SX1302 (demo)" : state.backend === "sx1302-ssh" ? "SX1302 over SSH" : "SX1302";
+  $("gateway").replaceChildren(
+    ...[
+      ["Radio backend", backend],
+      ["Gateway MAC", macLabel(state.gateway_mac)],
+      ["MQTT", state.mqtt],
+      ["Devices", String(state.devices.length)],
+    ].map(([k, v]) => {
+      const li = el("li");
+      li.append(el("span", k, "grow"), el("span", v, "value"));
+      return li;
+    }),
+  );
+}
+
+// ---- device dialog -------------------------------------------------------------
+function openDialog(mac) {
+  selectedMac = mac;
+  fillDialog();
+  $("dialog").showModal();
+}
+$("d-close").addEventListener("click", () => $("dialog").close());
+$("dialog").addEventListener("close", () => {
+  selectedMac = null;
+  delete $("d-actions").dataset.signature;
+});
+
+function fillDialog() {
+  const d = state.devices.find((item) => item.mac === selectedMac);
+  if (!d) return $("dialog").close();
+  $("d-icon").replaceWith(Object.assign(deviceIcon(d), { id: "d-icon" }));
+  $("d-name").textContent = d.name;
+  $("d-sub").textContent = `${macLabel(d.mac)} · ${STATES[d.state] || d.state}`;
+  const rows = [
+    ...d.properties.map((p) => [`${label(p.name)}${p.channel > 1 ? ` (ch ${p.channel})` : ""}`, format(p)]),
+    ["Signal", d.rssi == null ? "—" : `${d.rssi} dBm${d.snr == null ? "" : ` · SNR ${d.snr}`}`],
+    ["Firmware", d.firmware || "—"],
+    ["Last seen", age(d.last_seen)],
+  ];
+  $("d-readings").replaceChildren(
+    ...rows.map(([k, v]) => {
+      const li = el("li");
+      li.append(el("span", k, "grow"), el("span", v, "value"));
+      return li;
+    }),
+  );
+  const signature = `${d.mac}:${d.state === "discovered"}:${demo()}`;
+  if ($("d-actions").dataset.signature === signature) return;
+  $("d-actions").dataset.signature = signature;
   const commands =
     d.state === "discovered"
-      ? [["adopt", "Pair"]]
+      ? [["adopt", "Pair", "filled"]]
       : [
           ["locate", "Locate"],
-          ["refresh", "Refresh"],
-          ["reboot", "Reboot"],
+          ["refresh", "Refresh info"],
+          ["reboot", "Reboot", "danger"],
         ];
-  for (const [command, label] of commands) {
-    const button = el("button", label, "secondary");
-    button.disabled = state.demo;
-    button.addEventListener("click", async () => {
-      if (command === "reboot" && !confirm(`Reboot ${d.name}?`)) return;
-      button.disabled = true;
-      try {
-        await api(`devices/${mac}/command`, { command });
-        notice(`${label} queued.`);
-        await refresh();
-      } catch (error) {
-        notice(error.message);
-      } finally {
-        button.disabled = state?.demo ?? true;
-      }
-    });
-    $("detail-actions").append(button);
-  }
-}
-function showDevice(mac) {
-  selectedMac = mac;
-  fillDevice(mac);
-  $("device-dialog").showModal();
-}
-function invalidatePreview() {
-  previewVersion += 1;
-  previewDocument = null;
-  previewJobId = null;
-  $("apply-import").disabled = true;
-  $("confirm-import").checked = false;
-  $("preview-result").replaceChildren(el("p", "No keys selected."));
-}
-document
-  .querySelectorAll("[data-page]")
-  .forEach((button) =>
-    button.addEventListener("click", () => page(button.dataset.page)),
+  $("d-actions").replaceChildren(
+    el("span", "Commands are delivered when the sensor next wakes.", "secondary grow"),
+    ...commands.map(([command, text, cls]) => {
+      const button = el("button", text, cls);
+      button.disabled = demo();
+      button.addEventListener("click", async () => {
+        if (command === "reboot" && !confirm(`Reboot ${d.name}?`)) return;
+        button.disabled = true;
+        try {
+          await api(`devices/${d.mac}/command`, { command });
+          toast(`${text} queued for ${d.name}.`);
+          await refresh();
+        } catch (error) {
+          toast(error.message);
+        } finally {
+          button.disabled = demo();
+        }
+      });
+      return button;
+    }),
   );
-async function unlock(ingress = false) {
-  token = ingress ? "ingress" : $("token").value.trim();
-  try {
-    state = await api("state");
-    $("token").value = "";
-    $("login").hidden = true;
-    $("workspace").hidden = false;
-    $("lock").hidden = ingress;
-    notice("");
-    render();
-    await pollExtraction();
-    clearTimeout(timer);
-    timer = setTimeout(refresh, 3000);
-  } catch (error) {
-    notice(error.message);
-  }
 }
-$("login-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  unlock();
+
+// ---- import: review + apply ------------------------------------------------------
+function invalidatePreview() {
+  preview = { version: preview.version + 1, document: null, jobId: null };
+  $("confirm-import").checked = false;
+  $("apply-import").disabled = true;
+  $("preview").replaceChildren(el("li", "Extract or paste keys to review them here.", "secondary"));
+}
+function renderPreview(result) {
+  $("preview").replaceChildren(
+    ...result.devices.map((d) => {
+      const li = el("li");
+      const text = el("div", d.name, "grow");
+      text.append(el("div", macLabel(d.mac), "secondary"));
+      li.append(text, el("span", d.conflict ? "Already exists" : "Ready", d.conflict ? "value conflict" : "value"));
+      return li;
+    }),
+  );
+}
+$("confirm-import").addEventListener("change", () => {
+  $("apply-import").disabled = (!preview.document && !preview.jobId) || !$("confirm-import").checked || demo();
 });
-fetch("api/session")
-  .then((response) => response.json())
-  .then((session) => {
-    if (session.ingress) unlock(true);
-  })
-  .catch(() => {});
-$("lock").addEventListener("click", lock);
-$("search").addEventListener("input", () => {
-  if (state) renderDevices();
-});
-$("close-detail").addEventListener("click", () => $("device-dialog").close());
-$("import-json").addEventListener("input", invalidatePreview);
-$("import-file").addEventListener("change", async (event) => {
-  invalidatePreview();
-  const version = previewVersion;
-  const file = event.target.files[0];
-  if (!file) return;
-  if (file.size > 100000) {
-    notice("Maximum file size: 100 KB.");
-    return;
+$("apply-import").addEventListener("click", async () => {
+  if (!preview.document && !preview.jobId) return;
+  $("apply-import").disabled = true;
+  try {
+    const confirmed = $("confirm-import").checked;
+    const result = preview.jobId
+      ? await api("extraction/import", { job_id: preview.jobId, confirmed })
+      : await api("import", { document: preview.document, confirmed });
+    invalidatePreview();
+    $("import-json").value = $("import-file").value = "";
+    toast(`${result.imported} ${result.imported === 1 ? "device" : "devices"} imported. Waiting for reconnect.`);
+    tab("devices");
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+    invalidatePreview();
   }
-  const contents = await file.text();
-  if (version === previewVersion) $("import-json").value = contents;
 });
-$("preview").addEventListener("click", async () => {
+
+$("import-json").addEventListener("input", invalidatePreview);
+$("import-file").addEventListener("change", async (e) => {
   invalidatePreview();
-  const version = previewVersion;
+  const version = preview.version;
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 100000) return toast("Maximum file size: 100 KB.");
+  const contents = await file.text();
+  if (version === preview.version) $("import-json").value = contents;
+});
+$("review-json").addEventListener("click", async () => {
+  invalidatePreview();
+  const version = preview.version;
   try {
     const document = JSON.parse($("import-json").value);
     const result = await api("import/preview", { document });
-    if (version !== previewVersion) return;
+    if (version !== preview.version) return;
     renderPreview(result);
-    if (result.can_import) previewDocument = document;
-    notice(
-      result.can_import
-        ? "Keys validated."
-        : "Import blocked: devices already exist.",
-    );
+    if (result.can_import) preview.document = document;
+    toast(result.can_import ? "Keys validated." : "Import blocked: some devices already exist.");
   } catch (error) {
-    notice(error instanceof SyntaxError ? "Invalid JSON." : error.message);
+    toast(error instanceof SyntaxError ? "Invalid JSON." : error.message);
   }
-});
-$("confirm-import").addEventListener("change", () => {
-  $("apply-import").disabled =
-    (!previewDocument && !previewJobId) ||
-    !$("confirm-import").checked ||
-    (state?.demo ?? true);
-});
-$("apply-import").addEventListener("click", async () => {
-  if (!previewDocument && !previewJobId) return;
-  $("apply-import").disabled = true;
-  try {
-    const result = await api(previewJobId ? "extraction/import" : "import", {
-      ...(previewJobId
-        ? { job_id: previewJobId }
-        : { document: previewDocument }),
-      confirmed: $("confirm-import").checked,
-    });
-    invalidatePreview();
-    $("import-json").value = "";
-    $("import-file").value = "";
-    notice(
-      `${result.imported} ${result.imported === 1 ? "device" : "devices"} imported. Awaiting reconnect.`,
-    );
-    page("devices");
-    await refresh();
-  } catch (error) {
-    notice(error.message);
-    invalidatePreview();
-  }
-});
-$("diagnostics").addEventListener("click", () => {
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }),
-  );
-  const link = el("a");
-  link.href = url;
-  link.download = "superlink-diagnostics.json";
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
-function renderPreview(result) {
-  $("preview-result").replaceChildren();
-  for (const d of result.devices) {
-    const row = el(
-      "div",
-      `${d.name}${d.conflict ? " · Already exists" : " · Ready"}`,
-      `preview-row${d.conflict ? " conflict" : ""}`,
-    );
-    row.append(el("small", d.mac));
-    $("preview-result").append(row);
-  }
-}
-function renderExtraction() {
-  const job = extractionState;
-  const active = ![
-    "idle",
-    "ready",
-    "failed",
-    "expired",
-    "imported",
-    "recovery_required",
-  ].includes(job.state);
-  $("probe-source").disabled =
-    active || job.state === "recovery_required" || (state?.demo ?? true);
-  $("extract-keys").disabled =
-    !sourceProbe ||
-    !$("confirm-source").checked ||
-    active ||
-    job.state === "recovery_required" ||
-    (state?.demo ?? true);
-  $("extract-keys").hidden = job.state === "recovery_required";
-  $("recover-source").hidden = job.state !== "recovery_required";
-  $("review-extraction").hidden = job.state !== "ready";
-  $("extraction-status").hidden = job.state === "idle";
-  $("source-identity").hidden = !sourceProbe;
-  $("source-credentials").hidden =
-    !sourceProbe && job.state !== "recovery_required";
-  const minutes = Math.ceil((job.expires_in || 0) / 60);
-  const signature = JSON.stringify([
-    job.state,
-    job.message,
-    job.host,
-    job.fingerprint,
-    job.count,
-    job.excluded,
-    minutes,
-    job.recovery_command,
-  ]);
-  if ($("extraction-status").dataset.signature !== signature) {
-    $("extraction-status").dataset.signature = signature;
-    $("extraction-status").replaceChildren(
-      el("strong", job.state.replaceAll("_", " ")),
-      ...(["failed", "recovery_required"].includes(job.state)
-        ? [el("p", job.message || "")]
-        : []),
-    );
-    if (job.host)
-      $("extraction-status").append(
-        el("code", `${job.host} · ${job.fingerprint}`, "fingerprint"),
-      );
-    if (job.state === "ready") {
-      $("extraction-status").append(
-        el(
-          "p",
-          `${job.count} ready / ${job.excluded} excluded / expires ${minutes}m`,
-        ),
-      );
-    }
-    if (job.state === "recovery_required" && job.recovery_command) {
-      $("extraction-status").append(
-        el("code", job.recovery_command, "fingerprint"),
-      );
-    }
-  }
-  if (previewJobId && (job.state !== "ready" || job.id !== previewJobId))
-    invalidatePreview();
-}
-async function pollExtraction() {
+// ---- import: SSH extraction ------------------------------------------------------
+async function pollJob() {
   const requestToken = token;
   const result = await api("extraction");
   if (token !== requestToken) return;
-  extractionState = result;
-  renderExtraction();
+  job = result;
+  renderJob();
 }
+
+function renderJob() {
+  const running = !IDLE_JOB.includes(job.state);
+  const recovery = job.state === "recovery_required";
+  $("probe").disabled = running || recovery || demo();
+  $("extract").disabled = !sourceProbe || !$("confirm-source").checked || running || recovery || demo();
+  $("extract").hidden = recovery;
+  $("recover").hidden = !recovery;
+  $("review-job").hidden = job.state !== "ready";
+  $("verify").hidden = !sourceProbe;
+  $("credentials").hidden = !sourceProbe && !recovery;
+
+  const step = job.state === "ready" ? 3 : running || recovery ? 2 : sourceProbe ? ($("confirm-source").checked ? 2 : 1) : 0;
+  ["step-connect", "step-verify", "step-extract"].forEach((id, i) => {
+    $(id).classList.toggle("done", i < step);
+    $(id).classList.toggle("current", i === step);
+  });
+
+  const box = $("job");
+  box.hidden = job.state === "idle";
+  const minutes = Math.ceil((job.expires_in || 0) / 60);
+  const signature = JSON.stringify([job.state, job.message, job.host, job.fingerprint, job.count, job.excluded, minutes, job.recovery_command]);
+  if (box.dataset.signature !== signature) {
+    box.dataset.signature = signature;
+    box.className = `callout${["failed", "recovery_required", "expired"].includes(job.state) ? " error" : job.state === "ready" ? " ok" : ""}`;
+    box.replaceChildren(el("strong", job.state.replaceAll("_", " ")));
+    if (["failed", "recovery_required"].includes(job.state) && job.message) box.append(el("p", job.message));
+    if (job.host) box.append(el("code", `${job.host} · ${job.fingerprint}`));
+    if (job.state === "ready") box.append(el("p", `${job.count} ready · ${job.excluded} excluded · expires in ${minutes} min`));
+    if (recovery && job.recovery_command) box.append(el("code", job.recovery_command));
+  }
+  if (preview.jobId && (job.state !== "ready" || job.id !== preview.jobId)) invalidatePreview();
+}
+
 function invalidateSource() {
   sourceProbe = null;
   $("confirm-source").checked = false;
   $("source-password").value = "";
-  $("source-identity").hidden = true;
-  $("source-credentials").hidden =
-    extractionState.state !== "recovery_required";
-  renderExtraction();
+  renderJob();
 }
-for (const id of ["source-host", "source-port"])
-  $(id).addEventListener("input", invalidateSource);
-$("confirm-source").addEventListener("change", renderExtraction);
-$("extraction-probe-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
+for (const id of ["source-host", "source-port"]) $(id).addEventListener("input", invalidateSource);
+$("confirm-source").addEventListener("change", renderJob);
+
+$("probe-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
   invalidateSource();
   const host = $("source-host").value.trim(),
     port = Number($("source-port").value),
     requestToken = token;
-  $("probe-source").disabled = true;
+  $("probe").disabled = true;
   try {
     const result = await api("extraction/probe", { host, port });
-    if (
-      token !== requestToken ||
-      host !== $("source-host").value.trim() ||
-      port !== Number($("source-port").value)
-    )
-      return;
+    if (token !== requestToken || host !== $("source-host").value.trim() || port !== Number($("source-port").value)) return;
     sourceProbe = result;
-    $("source-fingerprint").textContent =
-      `${result.host}:${result.port} · ${result.fingerprint}`;
-    $("source-identity").hidden = false;
-    $("source-credentials").hidden = false;
+    $("fingerprint").textContent = `${result.host}:${result.port} · ${result.fingerprint}`;
   } catch (error) {
-    notice(error.message);
+    toast(error.message);
   } finally {
-    renderExtraction();
+    renderJob();
   }
 });
-$("extract-keys").addEventListener("click", async () => {
+
+$("extract").addEventListener("click", async () => {
   if (!sourceProbe || !$("confirm-source").checked) return;
   invalidatePreview();
-  $("extract-keys").disabled = true;
+  $("extract").disabled = true;
   const requestToken = token;
   try {
     const pending = api("extraction/start", {
@@ -506,48 +460,58 @@ $("extract-keys").addEventListener("click", async () => {
     const result = await pending;
     if (token !== requestToken) return;
     sourceProbe = null;
-    extractionState = result;
-    notice("Extracting. Keep UniFi connected.");
+    job = result;
+    toast("Extracting keys. Keep the gateway connected to UniFi.");
   } catch (error) {
-    notice(error.message);
+    toast(error.message);
   } finally {
-    renderExtraction();
+    renderJob();
   }
 });
-$("review-extraction").addEventListener("click", async () => {
+
+$("review-job").addEventListener("click", async () => {
   invalidatePreview();
-  const version = previewVersion,
-    jobId = extractionState.id;
+  const version = preview.version,
+    jobId = job.id;
   try {
     const result = await api("extraction/preview", { job_id: jobId });
-    if (version !== previewVersion) return;
+    if (version !== preview.version) return;
     renderPreview(result);
-    if (result.can_import) previewJobId = jobId;
-    notice(
-      result.can_import
-        ? "Stop the previous gateway before import."
-        : "Devices already exist.",
-    );
+    if (result.can_import) preview.jobId = jobId;
+    toast(result.can_import ? "Stop the previous gateway, then import." : "Some devices already exist.");
   } catch (error) {
-    notice(error.message);
+    toast(error.message);
   }
 });
-$("recover-source").addEventListener("click", async () => {
-  $("recover-source").disabled = true;
+
+$("recover").addEventListener("click", async () => {
+  $("recover").disabled = true;
   const requestToken = token;
   try {
     const pending = api("extraction/recover", {
-      job_id: extractionState.id,
+      job_id: job.id,
       username: $("source-user").value.trim(),
       password: $("source-password").value,
     });
     $("source-password").value = "";
     const result = await pending;
-    if (token === requestToken) extractionState = result;
+    if (token === requestToken) job = result;
   } catch (error) {
-    notice(error.message);
+    toast(error.message);
   } finally {
-    $("recover-source").disabled = false;
-    renderExtraction();
+    $("recover").disabled = false;
+    renderJob();
   }
 });
+
+// ---- diagnostics -------------------------------------------------------------------
+$("diagnostics").addEventListener("click", () => {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }));
+  const link = el("a");
+  link.href = url;
+  link.download = "superlink-diagnostics.json";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+invalidatePreview();
