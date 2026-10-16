@@ -278,3 +278,17 @@ def test_web_config_requires_private_token_and_valid_port(tmp_path, monkeypatch)
         WebConfig(TOKEN, port=True)
     with pytest.raises(ValueError):
         WebConfig(TOKEN + "\n")
+
+
+def test_pairing_blocks_device_commands_until_persisted_adoption():
+    from superlink.bridge.events import DeviceStateEvent
+    from tests.fixtures.captured_frames import DISCOVERY_FRAME_RAW
+    rt = runtime()
+    manager = Management(rt)
+    rt.core.feed(DISCOVERY_FRAME_RAW, 1, 100)
+    mac = next(iter(manager.observed))
+    assert manager.command(mac.hex(), 'adopt')['state'] == 'queued'
+    with pytest.raises(ValueError, match='pairing'):
+        manager.command(mac.hex(), 'reboot')
+    assert manager.snapshot()['devices'][0]['has_session']
+    assert not manager.snapshot()['devices'][0]['adopted']

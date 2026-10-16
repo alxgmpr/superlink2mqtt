@@ -247,7 +247,10 @@ Backups contain keys and should be protected like the live registry.
 
 ## API and UI behavior
 
-All API routes require `Authorization: Bearer <token>`.
+Standalone API requests require `Authorization: Bearer <token>` (except the
+non-sensitive `/api/session` bootstrap). In the Home Assistant app, requests
+must come through the verified Supervisor Ingress peer; Home Assistant handles
+authentication. Do not enter an HA long-lived token into the standalone form.
 
 | Route | Purpose |
 | --- | --- |
@@ -274,11 +277,13 @@ Readings are live projections and appear after telemetry arrives; unknown
 battery, firmware, signal and last-seen values stay unknown. Diagnostics contain
 device identifiers and readings but exclude keys and credentials.
 
-The management API provides the interface for future remote clients and a
-Ubiquiti backend. The current implementation still runs alongside the SX1302
-runtime: all radio timing remains on that host. Home Assistant can run elsewhere
-and consume MQTT. An HA Ingress package and a Ubiquiti application-message backend
-are not implemented by this change.
+The bridge can run independently of Home Assistant or as a Home Assistant app
+with Ingress. The app uses the remote Pi SX1302 backend while retaining protocol
+sessions and keys locally. See [app setup](../homeassistant/superlink2mqtt/DOCS.md).
+Radio outages keep management available and retry automatically; interrupted
+commands are discarded, and existing devices become unavailable until reconnect.
+An unavailable MQTT broker also leaves management accessible. The web UI reports
+HTTP and authentication failures without attempting to display raw proxy bodies.
 
 ## Validation
 

@@ -31,6 +31,8 @@ class Management:
             item["state"] = "discovered"
         elif isinstance(event, DeviceStateEvent):
             item["state"] = event.state
+            self.activity.appendleft({"time": time.time(), "mac": event.mac.hex(),
+                                      "message": f"Device {event.state.replace('_', ' ')}"})
         elif isinstance(event, DeviceInfoEvent):
             item["firmware"] = ".".join(map(str, event.fw_version))
             item["device_type"] = event.device_type
@@ -56,6 +58,7 @@ class Management:
             devices.append({
                 "mac": mac.hex(), "name": (record.name if record else None) or f"SuperLink {mac.hex()[-6:]}",
                 "adopted": bool(record and record.adopted),
+                "has_session": self.runtime.core.has_session(mac),
                 "state": seen.get("state", "awaiting_reconnect"),
                 "last_seen": seen.get("last_seen"),
                 "rssi": seen.get("rssi"), "snr": seen.get("snr"),
@@ -64,6 +67,8 @@ class Management:
             })
         mqtt = self.runtime.mqtt_bridge
         return {"demo": self.runtime.demo,
+                "radio": {"state": self.runtime.radio_state,
+                          "error": self.runtime.radio_error},
                 "backend": "sx1302-ssh" if self.runtime.config.radio else "sx1302",
                 "gateway_mac": self.runtime.config.gw_mac.hex(),
                 "mqtt": "connected" if mqtt and mqtt.client.is_connected() else
@@ -92,6 +97,8 @@ class Management:
     def command(self, mac_text, command):
         if self.runtime.demo:
             raise ValueError("Demo mode cannot send commands")
+        if self.runtime.config.radio and self.runtime.radio_state != "connected":
+            raise ValueError("Radio unavailable; wait for reconnect before sending commands")
         mac = parse_mac(mac_text)
         if not isinstance(command, str):
             raise ValueError("command must be a string")
@@ -105,6 +112,8 @@ class Management:
                 raise ValueError("Unsupported command")
             if not self.runtime.core.has_session(mac):
                 raise ValueError("Device has no active session")
+            if not any(r.mac == mac and r.adopted for r in self.runtime.store.load_all()):
+                raise ValueError("Wait for pairing to complete before sending commands")
             action = commands[command](mac)
         self.runtime.core.submit(action)
         self.activity.appendleft({"time": time.time(), "mac": mac.hex(),

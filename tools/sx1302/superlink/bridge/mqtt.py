@@ -45,6 +45,8 @@ class MqttBridge:
         # configs and state). Retraction has to clear exactly these, so they
         # are recorded at publish time rather than reconstructed later.
         self._retained: dict[bytes, set[str]] = {}
+        self._availability: dict[bytes, str] = {
+            r.mac: "offline" for r in runtime.store.load_all()}
         runtime.add_event_sink(self.on_event)
 
     # --- lifecycle ---
@@ -53,14 +55,19 @@ class MqttBridge:
         self.client.will_set(avail, "offline", retain=True)
         if self.config.username:
             self.client.username_pw_set(self.config.username, self.config.password)
+        if self.config.tls:
+            self.client.tls_set()
         self.client.on_message = self._paho_on_message
         self.client.on_connect = self._paho_on_connect
-        self.client.connect(self.config.host, self.config.port)
+        # Broker outages must not prevent the management UI from starting.
+        self.client.connect_async(self.config.host, self.config.port)
         self.client.loop_start()
-        self.client.publish(avail, "online", retain=True)
 
     def _paho_on_connect(self, client, userdata, flags, reason_code,
                          properties=None):
+        if reason_code != 0:
+            log.warning("MQTT connection rejected")
+            return
         # (Re)subscribe on every (re)connect. paho does not restore
         # subscriptions after an auto-reconnect, and subscribing here (rather
         # than right after connect()) guarantees it happens post-CONNACK — so
@@ -68,6 +75,9 @@ class MqttBridge:
         client.subscribe(f"{self.base}/+/+/set")
         client.subscribe(f"{self.base}/+/+/press")
         client.subscribe(f"{self.base}/adopt")
+        client.publish(f"{self.base}/bridge/availability", "online", retain=True)
+        for mac, state in self._availability.copy().items():
+            client.publish(f"{self.base}/{mac.hex()}/availability", state, retain=True)
         log.info("MQTT connected (rc=%s); subscribed to command topics",
                  reason_code)
 
@@ -91,6 +101,7 @@ class MqttBridge:
                                            "first_seen": event.first_seen}))
         elif isinstance(event, DeviceStateEvent):
             state = "online" if event.state in ("adopted", "active") else "offline"
+            self._availability[event.mac] = state
             if event.state in ("adopted", "active"):
                 self._publish_buttons(event.mac)
             self._pub_retained(event.mac,
@@ -108,6 +119,7 @@ class MqttBridge:
     def _retract_device(self, mac: bytes) -> None:
         """Clear every retained topic published for a device, so its HA
         entities disappear instead of lingering as stale retained configs."""
+        self._availability.pop(mac, None)
         topics = self._retained.pop(mac, set())
         for topic in sorted(topics):
             self.client.publish(topic, "", retain=True)

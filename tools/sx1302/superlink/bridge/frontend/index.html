@@ -5,12 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SuperLink · superlink2mqtt</title>
     <link rel="stylesheet" href="style.css" />
+    <script src="request.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
     <header class="appbar">
       <div class="appbar-row">
         <h1>SuperLink</h1>
+        <button data-goto="setup">Setup guide</button>
         <span class="chip" id="mqtt-chip" hidden
           ><span class="dot"></span><span>MQTT</span></span
         >
@@ -24,14 +26,21 @@
         <button class="tab" role="tab" data-tab="import">Import</button>
         <button class="tab" role="tab" data-tab="activity">Activity</button>
         <button class="tab" role="tab" data-tab="gateway">Gateway</button>
+        <button class="tab" role="tab" data-tab="setup">Setup</button>
       </nav>
     </header>
 
     <main>
-      <section id="login" class="card login">
+      <div id="health" class="callout error" role="status" hidden></div>
+      <section id="session-status" class="card card-content" role="status">
+        <p id="session-message">Checking access… Home Assistant handles sign-in when opened from its sidebar.</p>
+        <button id="retry-session">Retry connection</button>
+      </section>
+      <section id="login" class="card login" hidden>
         <form id="login-form">
           <div class="card-header">Unlock</div>
           <div class="card-content">
+            <p>This is the standalone bridge login. Use its SUPERLINK_WEB_TOKEN, not a Home Assistant access token. In Home Assistant, open the app from the sidebar to sign in automatically.</p>
             <label class="field"
               ><span>Access token (SUPERLINK_WEB_TOKEN)</span
               ><input id="token" type="password" autocomplete="off" required
@@ -49,9 +58,11 @@
           <span class="secondary" id="device-count"></span>
         </div>
         <div class="grid" id="devices"></div>
+        <p id="search-empty" class="empty" hidden>No matching devices. Clear or change your search.</p>
         <div class="card empty" id="devices-empty" hidden>
           <p>No devices yet.</p>
           <button class="filled" data-goto="import">Import sensors</button>
+          <button data-goto="setup">Pair a new sensor</button>
         </div>
       </section>
 
@@ -109,7 +120,7 @@
             </ol>
             <p class="secondary">
               ARMv7 SuperLink gateway with root SSH. Keep it connected to UniFi
-              during capture.
+              during capture. This restarts its radio service. Automatic extraction has not yet been qualified on physical firmware; preserve your original installation and keys.
             </p>
             <details>
               <summary>Import a JSON key bundle instead</summary>
@@ -151,6 +162,34 @@
         <div class="card-actions">
           <span class="secondary grow">Edit the YAML and restart to change settings.</span>
           <button id="diagnostics">Download diagnostics</button>
+        </div>
+      </section>
+
+      <section id="tab-setup" class="card" hidden>
+        <div class="card-header">Set up SuperLink → MQTT → Home Assistant</div>
+        <div class="card-content guide">
+          <p>superlink2mqtt is an independent bridge. The radio receives SuperLink packets, the bridge manages sensors and publishes MQTT, and Home Assistant discovers entities through its MQTT integration. The Home Assistant app runs that same bridge in a sidecar container.</p>
+          <h3>1. Connect the radio and broker</h3>
+          <p>In the Home Assistant app Configuration tab, set the Pi’s radio_host, radio_user and radio_port. Provision the dedicated SSH key, verified known_hosts and bridge.yaml in the app configuration directory using the installation guide. The app uses the Supervisor’s MQTT service automatically.</p>
+          <p>Open Gateway and check both Radio connection and MQTT. If the Pi is offline, the UI stays available and reconnects automatically. Check Pi power, its address, SSH access from Home Assistant, and that only one gateway owns the SX1302.</p>
+          <h3>2. Choose how to add sensors</h3>
+          <p><strong>New or factory-reset sensor:</strong> put it in pairing mode following its model’s instructions, then open Devices. Select the discovered sensor and press Pair. Only reset a sensor if you intend to erase its previous pairing. For manual pairing, use <code>adopt: []</code> in bridge.yaml; an explicit MAC allowlist pairs those sensors automatically.</p>
+          <p><strong>Existing UniFi sensor:</strong> open Import and review a JSON bundle containing its current persistent key and fallbackKey. Review never changes devices. Stop the previous controller, confirm that it no longer manages these sensors, and import. The sensor then reconnects using its existing keys. Temporary session keys cannot be imported.</p>
+          <p>The optional SSH extractor connects to the <strong>original UniFi gateway</strong>, not the Pi radio host. Verify its fingerprint through a trusted connection before providing credentials. It temporarily restarts the source radio service; follow any recovery instructions before trying again.</p>
+          <h3>3. Verify the complete path</h3>
+          <ol>
+            <li>Wait for fresh readings in Devices. Imported means saved; Connected means the sensor completed a radio handshake.</li>
+            <li>In Home Assistant, open Settings → Devices &amp; services → MQTT. Confirm that the SuperLink device and entities appear.</li>
+            <li>Operate the sensor (for example, move the door magnet) and verify a new reading here and a matching entity change in Home Assistant.</li>
+            <li>Use Refresh info and inspect Activity for a sensor response. Queued alone does not prove delivery. Sleeping devices may take time to respond.</li>
+            <li>Back up the app configuration and device store. After a planned restart, verify reconnect and a fresh event again.</li>
+          </ol>
+          <h3>Troubleshooting</h3>
+          <p><strong>502 or bridge unavailable:</strong> check the app logs and retry. <strong>Access denied:</strong> reopen the Home Assistant sidebar panel to refresh Ingress, or check the standalone token. Home Assistant access tokens are not required for this panel.</p>
+          <p><strong>No MQTT entities:</strong> check broker connectivity, the Home Assistant MQTT integration, and matching discovery prefixes. <strong>Awaiting reconnect:</strong> wake the sensor, check radio coverage and gateway identity, and ensure the old controller has stopped. Do not repeatedly import or reset it.</p>
+          <p><strong>Radio outage:</strong> device commands are unavailable. Pending commands are discarded on reconnection because a timed-out transmission might already have executed. Inspect device state before submitting another command.</p>
+          <p>Activity contains the latest 100 entries since app startup. Diagnostics exclude keys and credentials, but include device identifiers and readings.</p>
+          <p><a href="https://github.com/alxgmpr/superlink2mqtt/blob/codex/ha-setup-recovery/homeassistant/superlink2mqtt/DOCS.md" target="_blank" rel="noopener noreferrer">Installation guide</a> · <a href="https://www.home-assistant.io/integrations/mqtt/" target="_blank" rel="noopener noreferrer">Home Assistant MQTT integration</a></p>
         </div>
       </section>
     </main>

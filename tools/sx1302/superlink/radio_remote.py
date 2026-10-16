@@ -89,7 +89,11 @@ class RemoteSX1302:
         return response
 
     def receive(self):
-        result = self._rpc({"op": "receive"})
+        try:
+            result = self._rpc({"op": "receive"})
+        except RuntimeError as exc:
+            self.stop()
+            raise ConnectionError("Radio receive failed") from exc
         try:
             packets = result["packets"]
             if not isinstance(packets, list) or len(packets) > 16:
