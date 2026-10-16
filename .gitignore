@@ -20,6 +20,8 @@ firmware/analysis/
 # Build artifacts
 build/
 dist/
+verification/lean/.lake/
+.hypothesis/
 *.o
 *.so
 *.dylib

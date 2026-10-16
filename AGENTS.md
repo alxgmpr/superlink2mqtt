@@ -43,7 +43,12 @@ source .venv/bin/activate
 ```bash
 source .venv/bin/activate
 pytest tests/           # conftest.py adds tools/sx1302 to sys.path for `import superlink.*`
+HYPOTHESIS_PROFILE=ci pytest tests/ -q  # reproducible generated cases + stateful traces
+python tools/check_lean.py  # Lean proofs + Python correspondence; requires elan
 ```
+
+Lean setup and proof scope: `verification/lean/README.md`.
+Python property-test profiles and replay: `docs/TESTING.md`.
 
 ### Pi Gateway / Sniffer (SX1302)
 

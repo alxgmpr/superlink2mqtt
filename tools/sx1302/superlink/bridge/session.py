@@ -585,7 +585,8 @@ class DeviceSession:
             scan_c = self._scan_data_counter(frame)
             if scan_c is not None:
                 frame = decrypt_frame(frame, self.session_key,
-                                      ul_counter_offset=frame.seq_hi - scan_c)
+                                      ul_counter_offset=frame.seq_hi - scan_c,
+                                      dl_counter=scan_c)
                 log.debug("0x%02X counter=%d (seq=%02X.%02X)", frame.dctrl,
                           scan_c, frame.seq_hi, frame.seq_lo)
             else:
@@ -602,10 +603,6 @@ class DeviceSession:
             if scan_c is not None:
                 frame = decrypt_frame(frame, self.session_key,
                                       ul_counter_offset=frame.seq_hi - scan_c)
-                # DECODED telemetry: refresh liveness and clear the short-0x42
-                # tally — the link is provably healthy right now.
-                self._last_data_rx = self._now
-                self._short_challenge_count = 0
                 log.info("data counter=%d (seq=%02X.%02X)",
                          scan_c, frame.seq_hi, frame.seq_lo)
             else:
@@ -613,6 +610,18 @@ class DeviceSession:
                                       ul_counter_offset=self._ul_counter_offset)
                 log.info("data counter SCAN-FAIL seq=%02X.%02X",
                          frame.seq_hi, frame.seq_lo)
+        # A heuristic decrypt is useful to the legacy diagnostic caller, but
+        # it must not emit application events, rotate keys, or drain commands
+        # unless its MIC verifies. This also accepts a valid fallback counter
+        # outside the bounded 0..63 scan.
+        header = (bytes([frame.mctrl, frame.dctrl]) + frame.mac
+                  + bytes([frame.seq_hi, frame.seq_lo]))
+        if (frame.payload is None
+                or frame.mic != compute_mic(header, frame.payload)):
+            return frame, [], events
+        if frame.dctrl in (0x54, 0x44):
+            self._last_data_rx = self._now
+            self._short_challenge_count = 0
         log.info("RX dctrl=0x%02X %s seq=%02X.%02X %s",
                  frame.dctrl, format_mac(frame.mac),
                  frame.seq_hi, frame.seq_lo,
@@ -649,8 +658,16 @@ class DeviceSession:
                     "stored — did we send the ADOPT_REQUEST?")
                 return frame, [], events
 
-            self._derived_addDevice_key = kdf_E(self._eph_priv_r, dev_pub)
-            self._derived_addDevice_fb_key = kdf_E(self._eph_priv_o, dev_fb_pub)
+            # Validate both peer keys before replacing either persistent key.
+            # A malformed response must leave this attempt available to retry.
+            try:
+                primary_key = kdf_E(self._eph_priv_r, dev_pub)
+                fallback_key = kdf_E(self._eph_priv_o, dev_fb_pub)
+            except ValueError:
+                log.warning("ADOPT_RESPONSE has an invalid DH public key")
+                return frame, [], events
+            self._derived_addDevice_key = primary_key
+            self._derived_addDevice_fb_key = fallback_key
             log.info(
                 "ADOPT_RESPONSE tag=0x%02x devicePub=%s devFbPub=%s",
                 tag, dev_pub.hex(), dev_fb_pub.hex())
@@ -846,11 +863,12 @@ class DeviceSession:
         from ..hal import DL_FREQ_HZ, BW_500KHZ
         events: list = []
 
+        if frame.dctrl in (0x40, 0x42) and self._now < self._backoff_until:
+            # Both discovery and a directly retried challenge can reopen a
+            # handshake; neither may bypass the reconnect-storm cooldown.
+            return frame, [], events
+
         if frame.dctrl == 0x40:
-            if self._now < self._backoff_until:
-                # Reconnect-storm backoff: swallow discovery (no ConnRsp) until
-                # the cooldown elapses, so we stop feeding a re-handshake loop.
-                return frame, [], events
             # Discovery advertisement — decrypt with default pairing key,
             # counter=0: pass seq_hi as offset so seq_hi - offset = 0
             frame = decrypt_frame(frame, self.pairing_key,
@@ -951,18 +969,24 @@ class DeviceSession:
             if frame.payload[45:49] != b'\x03\xfe\xff\x03':
                 log.warning("0x42 marker mismatch at [45:49]: %s",
                             frame.payload[45:49].hex())
-            self._remote_pubkey = frame.payload[3:35]
-            self.sensor_mac = frame.mac
+            remote_pubkey = frame.payload[3:35]
             log.info("CONN_CHALLENGE from %s pubkey=%s",
-                     format_mac(frame.mac), self._remote_pubkey.hex())
+                     format_mac(frame.mac), remote_pubkey.hex())
 
             # Compute DH shared secret and derive session key.
             #   shared || gw_pub || sensor_pub || keypair+0x30_context
-            shared = compute_shared_secret(self._privkey, self._remote_pubkey)
-            self.session_key = derive_session_key(
-                shared, self._pubkey, self._remote_pubkey,
+            try:
+                shared = compute_shared_secret(self._privkey, remote_pubkey)
+            except ValueError:
+                log.warning("ConnectionChallenge has an invalid DH public key")
+                return frame, [], events
+            session_key = derive_session_key(
+                shared, self._pubkey, remote_pubkey,
                 context=self._kdf_context,
             )
+            self._remote_pubkey = remote_pubkey
+            self.sensor_mac = frame.mac
+            self.session_key = session_key
             self._ul_counter_offset = frame.seq_hi
             self._state = State.ACTIVE
             self._short_challenge_count = 0   # handshake completed; clear the tally

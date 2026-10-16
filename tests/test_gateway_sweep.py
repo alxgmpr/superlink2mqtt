@@ -83,14 +83,14 @@ def test_0x53_command_window_triggers_probe_tx():
     UL elicits a DL 0x74 probe (seq_hi echoes the 0x53, seq_lo 0x81, ctr 0) that
     decrypts to a DEVICE_INFO_REQUEST. Ground truth: bridge_adopt_fresh_pass2
     frame 62. Probes are NOT fired on 0x54 telemetry (fire-and-forget)."""
-    from superlink.decoder import build_frame, parse_frame, decrypt_frame
+    from superlink.decoder import build_frame, compute_mic, parse_frame, decrypt_frame
     s = _active_session_with_sweep(PropertySweep(ids=[43]))
     s._adopted = True  # command window only opens post-commit
     s._ul_counter_offset = 0
     # 0x54 telemetry (PROPERTY_REPORT) must NOT elicit a property/device probe;
     # it may only elicit a PING keep-alive (mid 4).
     raw54 = build_frame(0xE0, 0x54, SENSOR_MAC, 0x02, 0x00,
-                        b"\x00\x00\x00\x00", b"\x0c\x00",
+                        compute_mic(b"\xe0\x54" + SENSOR_MAC + b"\x02\x00", b"\x0c\x00"), b"\x0c\x00",
                         s.session_key, counter=2)
     _, tx54, _ = s.handle_rx(raw54, ul_channel=1)
     if tx54 is not None:
@@ -98,7 +98,7 @@ def test_0x53_command_window_triggers_probe_tx():
         assert f54.payload[0] == appmsg.MessageId.PING_REQUEST
     # 0x53 command window DOES elicit the DEVICE_INFO_REQUEST probe.
     raw53 = build_frame(0xE0, 0x53, SENSOR_MAC, 0x01, 0x30,
-                        b"\x00\x00\x00\x00", b"\x01\x00",
+                        compute_mic(b"\xe0\x53" + SENSOR_MAC + b"\x01\x30", b"\x01\x00"), b"\x01\x00",
                         s.session_key, counter=0)
     frame, tx_data, tx_freq = s.handle_rx(raw53, ul_channel=1)
     assert tx_data is not None and tx_freq > 0
