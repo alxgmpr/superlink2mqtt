@@ -139,3 +139,18 @@ def test_mqtt_start_uses_async_connect_and_honors_tls():
     bridge.start()
     assert client.loop_running and client.tls
     assert client.find('superlink/bridge/availability') is None
+
+
+def test_bad_mqtt_action_cannot_kill_polling_or_block_next_command():
+    from superlink.bridge.events import SetProperty
+    store = InMemoryDeviceStore()
+    store.save(DeviceRecord(mac=MAC, adopted=True))
+    rt = runtime(store=store)
+    rt.radio_state = 'connected'
+    rt.submit_action(SetProperty(MAC, 'NOT_A_PROPERTY', 1))
+    rt.submit_action(Locate(MAC))
+    queued = []
+    rt._sessions[MAC].queue_body = queued.append
+    rt.poll_once(100)
+    assert len(queued) == 1
+    assert rt._action_queue.empty()
