@@ -64,6 +64,14 @@ class GatewaySession(DeviceSession):
         self.sweep = sweep
         self._sweep_tag = 0
 
+    def start(self, now: float | None = None):
+        # Explicit clocks retain DeviceSession's interval-based scheduling.
+        # The no-argument legacy API sends its first beacon immediately, even
+        # on a freshly booted host where monotonic is less than one interval.
+        super().start(time.monotonic() if now is None else now)
+        if now is None:
+            self._last_beacon_time = float("-inf")
+
     # --- legacy `state` surface: the raw State enum, readable and settable ---
     @property
     def state(self) -> State:

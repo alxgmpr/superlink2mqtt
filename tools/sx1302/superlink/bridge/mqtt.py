@@ -3,6 +3,8 @@
 from __future__ import annotations
 import json
 import logging
+import re
+import threading
 
 from .config import MqttConfig
 from .entities import (
@@ -45,39 +47,85 @@ class MqttBridge:
         # configs and state). Retraction has to clear exactly these, so they
         # are recorded at publish time rather than reconstructed later.
         self._retained: dict[bytes, set[str]] = {}
+        # Radio events and paho callbacks run on different threads. Serialize
+        # replay with updates/removal so stale snapshots cannot resurrect state.
+        self._lock = threading.RLock()
+        self._connected = False
+        self._stopping = False
+        self._retained_payloads: dict[str, str] = {}
+        for record in runtime.store.load_all():
+            topic = f"{self.base}/{record.mac.hex()}/availability"
+            self._retained.setdefault(record.mac, set()).add(topic)
+            self._retained_payloads[topic] = "offline"
         runtime.add_event_sink(self.on_event)
 
     # --- lifecycle ---
     def start(self) -> None:
         avail = f"{self.base}/bridge/availability"
-        self.client.will_set(avail, "offline", retain=True)
+        self.client.will_set(avail, "offline", retain=True, qos=1)
         if self.config.username:
             self.client.username_pw_set(self.config.username, self.config.password)
+        if self.config.tls:
+            self.client.tls_set()
         self.client.on_message = self._paho_on_message
         self.client.on_connect = self._paho_on_connect
-        self.client.connect(self.config.host, self.config.port)
+        self.client.on_disconnect = self._paho_on_disconnect
+        self.client.on_connect_fail = self._paho_on_connect_fail
+        self.client.reconnect_delay_set(min_delay=1, max_delay=30)
+        self.client.connect_async(self.config.host, self.config.port)
         self.client.loop_start()
-        self.client.publish(avail, "online", retain=True)
 
     def _paho_on_connect(self, client, userdata, flags, reason_code,
                          properties=None):
-        # (Re)subscribe on every (re)connect. paho does not restore
-        # subscriptions after an auto-reconnect, and subscribing here (rather
-        # than right after connect()) guarantees it happens post-CONNACK — so
-        # HA command topics keep working across broker blips.
-        client.subscribe(f"{self.base}/+/+/set")
-        client.subscribe(f"{self.base}/+/+/press")
-        client.subscribe(f"{self.base}/adopt")
-        log.info("MQTT connected (rc=%s); subscribed to command topics",
-                 reason_code)
+        with self._lock:
+            if self._stopping or reason_code != 0:
+                log.warning("MQTT connection not accepted (rc=%s)", reason_code)
+                return
+            self._connected = True
+            client.subscribe(f"{self.base}/+/+/set")
+            client.subscribe(f"{self.base}/+/+/press")
+            client.subscribe(f"{self.base}/adopt")
+            # Rebuild a broker that lost its retained data, using the newest
+            # value of each topic. Non-retained button events are never replayed.
+            for topic, payload in self._retained_payloads.items():
+                self._publish_retained(topic, payload)
+            self._publish_retained(f"{self.base}/bridge/availability", "online")
+            log.info("MQTT connected; restored subscriptions and retained state")
+
+    def _paho_on_disconnect(self, client, userdata, disconnect_flags,
+                            reason_code, properties=None):
+        with self._lock:
+            self._connected = False
+        if not self._stopping:
+            log.warning("MQTT disconnected (rc=%s); awaiting reconnect", reason_code)
+
+    def _paho_on_connect_fail(self, client, userdata):
+        log.warning("MQTT broker unavailable; retrying in background")
 
     def stop(self) -> None:
-        self.client.publish(f"{self.base}/bridge/availability", "offline", retain=True)
-        self.client.loop_stop()
-        self.client.disconnect()
+        with self._lock:
+            if self._stopping:
+                return
+            self._stopping = True
+            info = (self._publish_retained(f"{self.base}/bridge/availability", "offline", qos=1)
+                    if self._connected else None)
+        try:
+            if info is not None:
+                info.wait_for_publish(timeout=2.0)
+                if not info.is_published():
+                    log.warning("MQTT offline publish was not confirmed before shutdown")
+        except (RuntimeError, ValueError):
+            log.warning("MQTT disconnected before offline publish was confirmed")
+        finally:
+            self.client.disconnect()
+            self.client.loop_stop()
 
     # --- outbound: events -> MQTT ---
     def on_event(self, event: Event) -> None:
+        with self._lock:
+            self._on_event(event)
+
+    def _on_event(self, event: Event) -> None:
         if isinstance(event, PropertyEvent):
             self._publish_property(event)
         elif isinstance(event, ButtonPressed):
@@ -103,14 +151,28 @@ class MqttBridge:
         """Publish a retained, device-scoped topic and remember it so
         _retract_device can clear it later."""
         self._retained.setdefault(mac, set()).add(topic)
-        self.client.publish(topic, payload, retain=True)
+        self._retained_payloads[topic] = payload
+        if self._connected:
+            self._publish_retained(topic, payload)
+
+    def _publish_retained(self, topic: str, payload, qos: int = 0):
+        # Coalesce retained snapshots ourselves. QoS 1 telemetry can be replayed
+        # by paho AFTER on_connect and overwrite our newer snapshot with an old
+        # unacknowledged value. Only the final offline publish needs a PUBACK.
+        info = self.client.publish(topic, payload, retain=True, qos=qos)
+        if info.rc != 0:
+            log.warning("MQTT publish not queued for %s (rc=%s)", topic, info.rc)
+        return info
 
     def _retract_device(self, mac: bytes) -> None:
         """Clear every retained topic published for a device, so its HA
         entities disappear instead of lingering as stale retained configs."""
         topics = self._retained.pop(mac, set())
         for topic in sorted(topics):
-            self.client.publish(topic, "", retain=True)
+            # Keep deletion markers through outages, too.
+            self._retained_payloads[topic] = ""
+            if self._connected:
+                self._publish_retained(topic, "")
         # Drop the once-only guards so a later re-adopt republishes discovery.
         self._buttons_done.discard(mac)
         machex = mac.hex()
@@ -155,8 +217,9 @@ class MqttBridge:
                 unit=None)
             self._pub_retained(ev.mac, topic, json.dumps(payload))
             self._discovery_done.add(key)
-        self.client.publish(f"{self.base}/{machex}/{PRESS_ENTITY_NAME}",
-                            json.dumps({"event_type": "press"}))
+        if self._connected:
+            self.client.publish(f"{self.base}/{machex}/{PRESS_ENTITY_NAME}",
+                                json.dumps({"event_type": "press"}))
 
     def _publish_property(self, ev: PropertyEvent) -> None:
         machex = ev.mac.hex()
@@ -178,36 +241,55 @@ class MqttBridge:
 
     # --- inbound: MQTT -> actions ---
     def _paho_on_message(self, client, userdata, msg):
-        payload = msg.payload.decode() if isinstance(msg.payload, bytes) else msg.payload
-        log.info("MQTT RX %s = %r", msg.topic, payload)
+        # A retained reset/reboot must never execute again on resubscription.
+        if msg.retain:
+            log.warning("ignoring retained command on %s", msg.topic)
+            return
+        try:
+            payload = msg.payload.decode("utf-8")
+        except UnicodeDecodeError:
+            log.warning("ignoring non-UTF-8 command on %s", msg.topic)
+            return
+        log.info("MQTT RX %s", msg.topic)
         self._on_message(msg.topic, payload)
 
     def _on_message(self, topic: str, payload: str) -> None:
-        parts = topic.split("/")
+        if not topic.startswith(f"{self.base}/"):
+            return
+        parts = topic[len(self.base) + 1:].split("/")
         if topic == f"{self.base}/adopt":
             try:
-                mac = bytes.fromhex(payload.strip())
+                mac = _parse_mac(payload.strip())
             except ValueError:
                 log.warning("bad adopt payload: %r", payload)
                 return
             self.runtime.submit_action(AdoptDevice(mac=mac))
             return
         # <base>/<machex>/<name>/{set,press}
-        if len(parts) == 4 and parts[0] == self.base:
+        if len(parts) == 3:
             try:
-                mac = bytes.fromhex(parts[1])
+                mac = _parse_mac(parts[0])
             except ValueError:
                 return
-            name, action = parts[2], parts[3]
+            name, action = parts[1], parts[2]
             if action == "set":
                 self.runtime.submit_action(SetProperty(
                     mac=mac, name_or_id=name, value=_parse_value(payload)))
             elif action == "press":
+                if payload.strip() != "PRESS":
+                    log.warning("ignoring invalid button payload on %s", topic)
+                    return
                 factory = _BUTTON_ACTIONS.get(name)
                 if factory is None:
                     log.warning("unknown button %r", name)
                     return
                 self.runtime.submit_action(factory(mac))
+
+
+def _parse_mac(value: str) -> bytes:
+    if not re.fullmatch(r"[0-9a-fA-F]{12}", value):
+        raise ValueError("expected a 12-digit sensor MAC")
+    return bytes.fromhex(value)
 
 
 def _parse_value(payload: str):

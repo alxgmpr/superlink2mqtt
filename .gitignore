@@ -71,3 +71,9 @@ captures/live/mock_controller.jsonl
 captures/sensor_ram*.bin
 tools/sensor_swd/*.bin
 tools/sensor_swd/*.log
+
+# Python packaging and local bridge state
+*.egg-info/
+.pytest_cache/
+superlink_bridge.yaml
+superlink_devices.json*

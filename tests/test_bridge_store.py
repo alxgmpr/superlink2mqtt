@@ -45,3 +45,95 @@ def test_json_roundtrip_preserves_prop_sizes_int_keys(tmp_path):
     JsonDeviceStore(path).save(rec)
     reloaded = JsonDeviceStore(path).load_all()[0]
     assert reloaded.prop_sizes == {1: 4, 3: 4, 15: 1}
+
+
+def test_atomic_store_keeps_private_previous_snapshot(tmp_path):
+    import stat
+    path = tmp_path / 'devices.json'
+    store = JsonDeviceStore(str(path))
+    store.save(_rec())
+    before = path.read_bytes()
+    store.delete(MAC)
+    assert store.load_all() == []
+    assert path.with_suffix('.json.bak').read_bytes() == before
+    for item in (path, path.with_suffix('.json.bak')):
+        assert stat.S_IMODE(item.stat().st_mode) == 0o600
+
+
+def test_replace_failure_preserves_pairing_keys(tmp_path, monkeypatch):
+    import os
+    import pytest
+    path = tmp_path / 'devices.json'
+    store = JsonDeviceStore(str(path))
+    store.save(_rec())
+    before = path.read_bytes()
+    replace = os.replace
+    def fail_primary(source, target):
+        if str(target) == str(path):
+            raise OSError('simulated interrupted replacement')
+        replace(source, target)
+    monkeypatch.setattr(os, 'replace', fail_primary)
+    with pytest.raises(OSError):
+        store.delete(MAC)
+    assert path.read_bytes() == before
+    assert store.load_all()[0].primary_key == _rec().primary_key
+    assert sorted(p.name for p in tmp_path.iterdir()) == ['devices.json', 'devices.json.bak']
+
+
+def test_failed_write_cleans_temporary_file(tmp_path, monkeypatch):
+    import json
+    import pytest
+    path = tmp_path / 'devices.json'
+    store = JsonDeviceStore(str(path))
+    store.save(_rec())
+    before = path.read_bytes()
+    def interrupted_dump(data, file, **kwargs):
+        file.write('{')
+        raise OSError('disk full')
+    monkeypatch.setattr(json, 'dump', interrupted_dump)
+    with pytest.raises(OSError):
+        store.save(_rec())
+    assert path.read_bytes() == before
+    assert [p.name for p in tmp_path.iterdir()] == ['devices.json']
+
+
+def test_corrupt_store_never_silently_restores_old_keys(tmp_path):
+    import pytest
+    from superlink.bridge.store import StoreError
+    path = tmp_path / 'devices.json'
+    store = JsonDeviceStore(str(path))
+    store.save(_rec())
+    store.delete(MAC)  # backup still contains a now-removed device
+    backup = path.with_suffix('.json.bak').read_bytes()
+    path.write_text('{broken')
+    with pytest.raises(StoreError, match='backup'):
+        store.load_all()
+    with pytest.raises(StoreError):
+        store.save(_rec())
+    assert path.read_text() == '{broken'
+    assert path.with_suffix('.json.bak').read_bytes() == backup
+    path.unlink()
+    with pytest.raises(StoreError, match='missing'):
+        store.load_all()
+
+
+def test_malformed_record_does_not_get_overwritten(tmp_path):
+    import json
+    import pytest
+    from superlink.bridge.store import StoreError
+    path = tmp_path / 'devices.json'
+    for malformed in ([], {MAC.hex(): {}}, {MAC.hex(): {'mac': 'abcd'}},
+                      {MAC.hex(): {'mac': MAC.hex(), 'primary_key': 'aa'}}):
+        path.write_text(json.dumps(malformed))
+        with pytest.raises(StoreError):
+            JsonDeviceStore(str(path)).save(_rec())
+        assert json.loads(path.read_text()) == malformed
+
+
+def test_parallel_saves_preserve_all_records(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    store = JsonDeviceStore(str(tmp_path / 'devices.json'))
+    records = [DeviceRecord(mac=i.to_bytes(6, 'big')) for i in range(20)]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(store.save, records))
+    assert {r.mac for r in store.load_all()} == {r.mac for r in records}
