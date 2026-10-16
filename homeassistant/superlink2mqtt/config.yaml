@@ -1,6 +1,6 @@
 name: superlink2mqtt
 slug: superlink2mqtt
-version: "0.2.1"
+version: "0.2.2"
 description: SuperLink sensors over a remote SX1302 radio
 arch:
   - amd64

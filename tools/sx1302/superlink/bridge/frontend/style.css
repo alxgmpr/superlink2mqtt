@@ -178,8 +178,7 @@ button.filled:disabled {
   font-size: 12px;
   margin-bottom: 4px;
 }
-input:not([type="checkbox"]),
-textarea {
+input {
   width: 100%;
   font: inherit;
   color: var(--text);
@@ -189,31 +188,10 @@ textarea {
   border-radius: 4px 4px 0 0;
   padding: 10px 12px;
 }
-input:focus,
-textarea:focus {
+input:focus {
   outline: none;
   border-bottom: 2px solid var(--primary);
 }
-textarea {
-  font: 12px/1.4 ui-monospace, Menlo, monospace;
-  resize: vertical;
-}
-.check {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  margin: 12px 0;
-}
-.check input {
-  margin-top: 3px;
-  accent-color: var(--primary);
-}
-.row {
-  display: grid;
-  grid-template-columns: 1fr 96px;
-  gap: 12px;
-}
-
 /* Chips + badges */
 .chip {
   display: inline-flex;
@@ -384,58 +362,6 @@ textarea {
   width: 84px;
   color: var(--muted);
   font-size: 12px;
-}
-.list .conflict {
-  color: var(--error);
-}
-
-/* Import */
-.import {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 16px;
-  align-items: start;
-}
-.steps {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: step;
-}
-.steps > li {
-  position: relative;
-  padding: 0 0 20px 40px;
-  counter-increment: step;
-}
-.steps > li::before {
-  content: counter(step);
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--hover);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
-}
-.steps > li.current::before {
-  background: var(--primary);
-  color: var(--on-primary);
-}
-.steps > li.done::before {
-  content: "✓";
-  background: var(--ok);
-  color: #fff;
-}
-.steps h3 {
-  font-size: 15px;
-  font-weight: 500;
-  margin-bottom: 8px;
-  line-height: 24px;
 }
 .callout {
   margin: 8px 0;

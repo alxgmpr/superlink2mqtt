@@ -15,7 +15,7 @@ def stage(target):
         shutil.copy2(ROOT / name, target / name)
     shutil.copytree(ROOT / "tools/sx1302/superlink", target / "tools/sx1302/superlink",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    # Share the normal container build, including automatic key extraction.
+    # Share the normal gateway container build.
     dockerfile = (ROOT / "Dockerfile").read_text()
     dockerfile = dockerfile[:dockerfile.index("USER superlink")]
     dockerfile += '''ARG BUILD_VERSION

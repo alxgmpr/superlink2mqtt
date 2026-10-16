@@ -15,7 +15,7 @@ from superlink.bridge.mqtt import MqttBridge
 from superlink.radio_remote import RemoteRadioConfig
 from tests.support.fake_hal import FakeHal
 from tests.support.fake_mqtt import FakeMqttClient
-from tests.test_management import request, TOKEN, bundle
+from tests.test_management import request, TOKEN
 
 MAC = bytes.fromhex('020000000004')
 
@@ -44,7 +44,7 @@ def test_http_works_while_radio_connect_is_blocked():
         status, body, _ = request(web, 'GET', '/api/state')
         assert status == 200 and b'connecting' in body
         assert time.monotonic() - start < 1
-        assert request(web, 'POST', '/api/import/preview', {'document': bundle()})[0] == 200
+        assert request(web, 'GET', '/')[0] == 200
         assert request(web, 'GET', '/api/state', token=None)[0] == 401
         assert request(web, 'POST', f'/api/devices/{MAC.hex()}/command', {'command': 'locate'})[0] == 400
     finally:

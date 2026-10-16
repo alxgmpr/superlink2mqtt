@@ -5,7 +5,7 @@ import time
 from .events import (AdoptDevice, CommandStatus, DeviceDiscovered, DeviceInfoEvent,
                      DeviceRemoved, DeviceStateEvent, LinkSignal, Locate,
                      PropertyEvent, Reboot, RequestDeviceInfo)
-from .importing import parse_import, parse_mac
+from .importing import parse_mac
 
 
 class Management:
@@ -74,25 +74,6 @@ class Management:
                 "mqtt": "connected" if mqtt and mqtt.client.is_connected() else
                         ("disconnected" if self.runtime.config.mqtt else "disabled"),
                 "devices": devices, "activity": list(self.activity)}
-
-    def preview(self, document):
-        records = parse_import(document)
-        existing = {r.mac for r in self.runtime.store.load_all()}
-        rows = [{"mac": r.mac.hex(), "name": r.name or f"SuperLink {r.mac.hex()[-6:]}",
-                 "conflict": r.mac in existing or self.runtime.core.has_session(r.mac),
-                 "network_id": r.network_id} for r in records]
-        return {"devices": rows, "can_import": not any(r["conflict"] for r in rows)}
-
-    def import_devices(self, body):
-        if self.runtime.demo:
-            raise ValueError("Demo mode cannot import devices")
-        if body.get("confirmed") is not True:
-            raise ValueError("Confirm that the previous gateway has stopped managing these sensors")
-        records = parse_import(body.get("document"))
-        self.runtime.core.import_devices(records)
-        self.activity.appendleft({"time": time.time(), "mac": None,
-                                  "message": f"Imported {len(records)} devices; awaiting reconnect"})
-        return {"imported": len(records), "state": "awaiting_reconnect"}
 
     def command(self, mac_text, command):
         if self.runtime.demo:

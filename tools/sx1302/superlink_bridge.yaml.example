@@ -36,7 +36,7 @@ control_socket: "/tmp/superlink_bridge.sock"
 
 # Optional management UI. Set SUPERLINK_WEB_TOKEN to a random token of at
 # least 32 characters before starting. Bind to a LAN address only behind HTTPS
-# or a trusted tunnel; the token grants device control and key import access.
+# or a trusted tunnel; the token grants device control and pairing access.
 # web:
 #   host: "127.0.0.1"
 #   port: 8099

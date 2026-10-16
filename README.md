@@ -12,12 +12,11 @@ presses) plus command buttons (locate, reboot, refresh, clear tamper). See
 **[docs/OPEN_GATEWAY_PLAN.md](docs/OPEN_GATEWAY_PLAN.md)** for current state and
 open work.
 
-The bridge now includes a local **management UI, automatic SSH key extraction, and persistent-key importer**.
+The bridge includes a local **management UI with fresh-key sensor pairing**.
 Install with `python -m pip install .`, then run `superlink-bridged --demo` to
-preview it without hardware. See [management setup and migration](docs/MANAGEMENT_UI.md)
-for installation, guided migration from existing Ubiquiti gateways, supported
-import formats and current
-limitations. A Ubiquiti gateway radio backend is not yet included.
+preview it without hardware. See [management setup](docs/MANAGEMENT_UI.md)
+for installation, pairing and current limitations. A Ubiquiti gateway radio
+backend is not yet included.
 
 For the Home Assistant container and Pi radio split, see
 [Home Assistant setup](homeassistant/superlink2mqtt/DOCS.md).
@@ -44,7 +43,7 @@ SuperLink is Ubiquiti's proprietary long-range wireless protocol used in UniFi A
 All confirmed over-the-air:
 
 | Parameter | Value |
-|-----------|-------|
+| ----------- | ------- |
 | Spreading Factor | SF5 |
 | Bandwidth (UL) | 125 kHz |
 | Bandwidth (DL) | 500 kHz |
@@ -95,7 +94,7 @@ Once the LoRa frame is decrypted, the payload is an application message:
 from UniFi Protect's `messages.ts` (webpack module 41118), is:
 
 | ID | Hex | Name | Direction |
-|----|------|------|-----------|
+| ---- | ------ | ------ | ----------- |
 | 1 | `0x01` | REQUEST_STATUS_RESPONSE | device → gateway |
 | 2 | `0x02` | ADOPT_REQUEST | gateway → device |
 | 3 | `0x03` | ADOPT_RESPONSE | device → gateway |

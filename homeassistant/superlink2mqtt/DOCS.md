@@ -18,8 +18,8 @@ SuperLink sensors ↔ Pi / SX1302 ↔ superlink2mqtt → MQTT broker → Home As
   and running. The bridge obtains its service credentials automatically.
 - Home Assistant's MQTT integration connected to that same broker. Installing a
   broker or this app alone does not configure Home Assistant's MQTT integration.
-- For migration: preserve the existing gateway identity, device store and MQTT
-  topic prefixes. Stop the old controller before transferring ownership.
+- For an existing superlink2mqtt installation, preserve its gateway identity,
+  device store and MQTT topic prefixes when moving or updating the bridge.
 
 ## Install and provision the radio
 
@@ -74,8 +74,8 @@ the UI; an explicit list of sensor MACs automatically adopts those sensors.
 Avoid `adopt: all` unless intentionally enrolling every discovered sensor.
 
 Do not create an empty `devices.json` file. Omit it for a new installation so the
-bridge can create its valid store. A UniFi JSON key bundle goes through **Import**;
-it is a different format from the bridge's persistent store.
+bridge can create its valid store. New sensors get fresh keys during pairing;
+those keys are saved for reconnects and restarts.
 
 Set `radio_host`, `radio_user`, and `radio_port` in the app's **Configuration**
 tab. Start the app, then enable **Start on boot** and **Watchdog**. Updates use
@@ -97,7 +97,12 @@ In **Gateway**, check **Radio connection: connected** and **MQTT: connected**.
 These are independent checks. MQTT connectivity alone does not prove the Pi or
 sensor link works. **Setup guide** is also accessible before standalone login.
 
-## Add a new sensor
+## Pair sensors with fresh keys
+
+New sensors and sensors previously managed by UniFi use the same pairing flow.
+For an existing UniFi sensor, factory-reset it according to its model's manual
+to clear the old pairing, then pair it here. No credentials for the original
+UniFi gateway are needed. The Pi radio still uses its dedicated SSH key.
 
 1. Put a new/unpaired sensor in pairing mode according to its model's manual.
    Factory-reset an existing sensor only when you intend to discard its pairing.
@@ -109,30 +114,6 @@ sensor link works. **Setup guide** is also accessible before standalone login.
 5. Trigger a physical event and confirm both a fresh bridge reading and the
    corresponding Home Assistant entity change.
 
-## Migrate existing sensors
-
-1. Preserve the original installation and obtain the current committed persistent
-   `key` and `fallbackKey`. Temporary session keys cannot be used for migration.
-2. Open **Import → Import a JSON key bundle instead**, paste or select the bundle,
-   then press **Review**. Review validates without writing. Invalid records,
-   duplicates, and existing devices block the entire import.
-3. Stop the previous controller from managing the selected sensors. Confirm this
-   in the UI and press **Import**. Import saves keys; it does not prove radio
-   reconnect or physical operation.
-4. Wake the sensor and wait for fresh readings. Verify a real event in Home
-   Assistant, then verify reconnect after a planned bridge restart.
-
-The optional SSH extractor targets the **original UniFi gateway**, not the Pi.
-It requires the supported ARMv7 firmware layout and root SSH, temporarily
-restarts the source radio service, and keeps extracted keys in server memory for
-10 minutes. Verify the fingerprint and read its confirmation before starting.
-Automatic extraction has not yet been qualified on physical Ubiquiti firmware.
-If it reports **Recovery required**, restore and verify the original service
-before another extraction or migration attempt.
-
-See the repository's `docs/MANAGEMENT_UI.md` for the JSON schema, supported
-source firmware and extraction recovery details.
-
 ## Troubleshooting and recovery
 
 | Symptom | Check |
@@ -142,7 +123,7 @@ source firmware and extraction recovery details.
 | 502 / bridge unavailable | App logs and configuration; restart or rebuild status; retry after startup |
 | Access denied | Reopen the HA sidebar panel; for standalone, use the bridge token, not an HA token |
 | No discovered sensor | Pairing mode, radio readiness, compatible hardware/channel plan, antenna and range |
-| Awaiting reconnect | Wake sensor, check gateway identity and keys, and stop the old controller; do not repeatedly reset/import |
+| Awaiting reconnect | Wake sensor, check gateway identity and keys, and stop the old controller; do not repeatedly reset |
 | No Home Assistant entities | Same broker, MQTT integration enabled, matching discovery prefix, and actual sensor telemetry |
 | No search results | Clear the search; it matches device name and MAC |
 
