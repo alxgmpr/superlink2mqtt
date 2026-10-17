@@ -79,6 +79,18 @@ The paths `hal_library`, `spi_path` and `reset_script` are configurable in YAML.
 Their defaults match the existing Pi installation. Changing them does not add
 support for a new radio model or a different regional channel plan.
 
+## First-sensor setup
+
+An empty installation opens a focused modal after authentication. Four illustrated
+steps check the radio and MQTT, offer Pair on discovered sensors, and wait for a
+decoded reading. Connection help stays collapsed until needed. Closing the modal
+keeps it closed while polling; **Get started** in the empty Devices view reopens
+it. Existing paired sensors suppress onboarding. There is no Setup navigation tab.
+
+The HA startup UI stays available while prerequisite files or MQTT service details
+are missing, then starts the bridge once they are ready. It never rewrites saved
+identities or keys.
+
 ## Pair sensors with fresh keys
 
 1. Put a new or factory-reset sensor in pairing mode using its model's instructions.

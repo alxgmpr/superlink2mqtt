@@ -25,8 +25,8 @@ def is_ingress(config, peer):
 
 
 class ManagementServer:
-    def __init__(self, runtime, config):
-        self.management = Management(runtime)
+    def __init__(self, runtime, config, *, management=None):
+        self.management = management if management is not None else Management(runtime)
         self.runtime = runtime
         self.config = config
         owner = self
@@ -111,6 +111,7 @@ class ManagementServer:
                 assets = {"/": ("index.html", "text/html; charset=utf-8"),
                           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                           "/request.js": ("request.js", "text/javascript; charset=utf-8"),
+                          "/onboarding.js": ("onboarding.js", "text/javascript; charset=utf-8"),
                           "/style.css": ("style.css", "text/css; charset=utf-8")}
                 if path not in assets:
                     self.reply(404, {"error": "Not found"})

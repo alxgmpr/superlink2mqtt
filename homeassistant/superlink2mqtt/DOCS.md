@@ -82,9 +82,11 @@ tab. Start the app, then enable **Start on boot** and **Watchdog**. Updates use
 the same staging procedure followed by **Rebuild**. Keep all private files out
 of the build directory and Git. Back up the app configuration before updates.
 
-Missing or invalid configuration files are startup errors: check the app logs
-and provision them before starting. A configured but unreachable radio is a
-recoverable outage and does not shut down the web UI.
+If radio files or MQTT service details are missing, the app opens its setup UI
+and checks again every five seconds. It does not generate a replacement gateway
+identity or change saved sensor keys. Provision the listed files and app options;
+the bridge starts when configuration is ready. Invalid stores require recovery.
+A configured but unreachable radio retries without closing the UI.
 
 ## Open the UI and check readiness
 
@@ -95,7 +97,11 @@ sidebar panel. A standalone installation uses its own `SUPERLINK_WEB_TOKEN`.
 
 In **Gateway**, check **Radio connection: connected** and **MQTT: connected**.
 These are independent checks. MQTT connectivity alone does not prove the Pi or
-sensor link works. **Setup guide** is also accessible before standalone login.
+sensor link works. With no paired sensors, a four-step modal opens automatically:
+radio, MQTT, pairing and a first reading. Each step shows a diagram and live
+status. Pair a discovered sensor inside the modal; completion requires persisted
+adoption and a decoded reading. Close it at any time and use **Get started** in
+the empty Devices view to resume. Saved sensors suppress automatic onboarding.
 
 ## Pair sensors with fresh keys
 

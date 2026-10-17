@@ -6,13 +6,13 @@
     <title>SuperLink · superlink2mqtt</title>
     <link rel="stylesheet" href="style.css" />
     <script src="request.js" defer></script>
+    <script src="onboarding.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
     <header class="appbar">
       <div class="appbar-row">
         <h1>SuperLink</h1>
-        <button data-goto="setup">Setup guide</button>
         <span class="chip" id="mqtt-chip" hidden
           ><span class="dot"></span><span>MQTT</span></span
         >
@@ -25,7 +25,6 @@
         <button class="tab" role="tab" data-tab="devices">Devices</button>
         <button class="tab" role="tab" data-tab="activity">Activity</button>
         <button class="tab" role="tab" data-tab="gateway">Gateway</button>
-        <button class="tab" role="tab" data-tab="setup">Setup</button>
       </nav>
     </header>
 
@@ -59,9 +58,9 @@
         <div class="grid" id="devices"></div>
         <p id="search-empty" class="empty" hidden>No matching devices. Clear or change your search.</p>
         <div class="card empty" id="devices-empty" hidden>
-          <p>No devices yet.</p>
-          <p>Pair a new or factory-reset sensor to generate fresh keys.</p>
-          <button class="filled" data-goto="setup">Pair a sensor</button>
+          <h2>Add your first sensor</h2>
+          <p>We’ll check your connections and walk you through pairing.</p>
+          <button class="filled" id="setup-open">Get started</button>
         </div>
       </section>
 
@@ -77,33 +76,24 @@
         </div>
       </section>
 
-      <section id="tab-setup" class="card" hidden>
-        <div class="card-header">Set up SuperLink → MQTT → Home Assistant</div>
-        <div class="card-content guide">
-          <p>superlink2mqtt is an independent bridge. The radio receives SuperLink packets, the bridge manages sensors and publishes MQTT, and Home Assistant discovers entities through its MQTT integration. The Home Assistant app runs that same bridge in a sidecar container.</p>
-          <h3>1. Connect the radio and broker</h3>
-          <p>In the Home Assistant app Configuration tab, set the Pi’s radio_host, radio_user and radio_port. Provision the dedicated SSH key, verified known_hosts and bridge.yaml in the app configuration directory using the installation guide. The app uses the Supervisor’s MQTT service automatically.</p>
-          <p>Open Gateway and check both Radio connection and MQTT. If the Pi is offline, the UI stays available and reconnects automatically. Check Pi power, its address, SSH access from Home Assistant, and that only one gateway owns the SX1302.</p>
-          <h3>2. Pair sensors with fresh keys</h3>
-          <p>Put a new or factory-reset sensor in pairing mode following its model’s instructions, then open Devices. Select the discovered sensor and press Pair. Only reset a sensor if you intend to erase its previous pairing. For manual pairing, use <code>adopt: []</code> in bridge.yaml; an explicit MAC allowlist pairs those sensors automatically.</p>
-          <p>Pairing generates fresh keys and saves them for reconnects and restarts. To move a sensor from UniFi, factory-reset it and pair it here. Credentials for the original UniFi gateway are not needed.</p>
-          <h3>3. Verify the complete path</h3>
-          <ol>
-            <li>Wait for fresh readings in Devices. Connected means the sensor completed a radio handshake.</li>
-            <li>In Home Assistant, open Settings → Devices &amp; services → MQTT. Confirm that the SuperLink device and entities appear.</li>
-            <li>Operate the sensor (for example, move the door magnet) and verify a new reading here and a matching entity change in Home Assistant.</li>
-            <li>Use Refresh info and inspect Activity for a sensor response. Queued alone does not prove delivery. Sleeping devices may take time to respond.</li>
-            <li>Back up the app configuration and device store. After a planned restart, verify reconnect and a fresh event again.</li>
-          </ol>
-          <h3>Troubleshooting</h3>
-          <p><strong>502 or bridge unavailable:</strong> check the app logs and retry. <strong>Access denied:</strong> reopen the Home Assistant sidebar panel to refresh Ingress, or check the standalone token. Home Assistant access tokens are not required for this panel.</p>
-          <p><strong>No MQTT entities:</strong> check broker connectivity, the Home Assistant MQTT integration, and matching discovery prefixes. <strong>Awaiting reconnect:</strong> wake the sensor, check radio coverage and gateway identity, and ensure the old controller has stopped. Do not repeatedly reset it.</p>
-          <p><strong>Radio outage:</strong> device commands are unavailable. Pending commands are discarded on reconnection because a timed-out transmission might already have executed. Inspect device state before submitting another command.</p>
-          <p>Activity contains the latest 100 entries since app startup. Diagnostics exclude keys and credentials, but include device identifiers and readings.</p>
-          <p><a href="https://github.com/alxgmpr/superlink2mqtt/blob/codex/ha-setup-recovery/homeassistant/superlink2mqtt/DOCS.md" target="_blank" rel="noopener noreferrer">Installation guide</a> · <a href="https://www.home-assistant.io/integrations/mqtt/" target="_blank" rel="noopener noreferrer">Home Assistant MQTT integration</a></p>
-        </div>
-      </section>
     </main>
+
+    <dialog id="setup-dialog" aria-labelledby="setup-title" aria-describedby="setup-description">
+      <div class="setup-top"><span id="setup-counter" class="eyebrow">GET CONNECTED</span><button class="icon-button" id="setup-close" aria-label="Close setup">×</button></div>
+      <ol class="setup-progress" aria-label="Setup progress">
+        <li>Radio</li><li>MQTT</li><li>Pair</li><li>Check</li>
+      </ol>
+      <div class="setup-body">
+        <div id="setup-art" class="setup-art"></div>
+        <h2 id="setup-title" tabindex="-1"></h2>
+        <p id="setup-description"></p>
+        <div id="setup-status" class="setup-status" role="status"></div>
+        <div id="setup-devices" class="setup-devices"></div>
+        <p id="setup-error" class="setup-error" role="alert" hidden></p>
+        <details id="setup-help"><summary id="setup-help-title">Connection help</summary><div id="setup-help-body"></div></details>
+      </div>
+      <div class="setup-actions"><button id="setup-back">Back</button><span class="grow"></span><button class="filled" id="setup-next">Continue</button></div>
+    </dialog>
 
     <dialog id="dialog">
       <div class="dialog-head">

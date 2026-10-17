@@ -1,6 +1,6 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
-const TABS = ["devices", "activity", "gateway", "setup"];
+const TABS = ["devices", "activity", "gateway"];
 const STATES = {
   awaiting_reconnect: "Awaiting reconnect",
   discovered: "Discovered",
@@ -73,7 +73,7 @@ async function api(path, body) {
 }
 const demo = () => state?.demo ?? true;
 const radioReady = () => state?.radio?.state === "connected";
-const macLabel = (mac) => mac.match(/../g).join(":").toUpperCase();
+const macLabel = (mac) => mac ? mac.match(/../g).join(":").toUpperCase() : "Not configured";
 const online = (d) => ["active", "adopted"].includes(d.state);
 function age(ts) {
   if (!ts) return "never";
@@ -98,12 +98,12 @@ function deviceIcon(d) {
 
 // ---- navigation + session --------------------------------------------------
 function tab(name) {
-  if (name !== "setup" && !state) return;
+  if (!state) return;
   for (const t of TABS) $(`tab-${t}`).hidden = t !== name;
   document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
 }
-document.querySelectorAll("[data-tab],[data-goto]").forEach((b) =>
-  b.addEventListener("click", () => tab(b.dataset.tab || b.dataset.goto)),
+document.querySelectorAll("[data-tab]").forEach((b) =>
+  b.addEventListener("click", () => tab(b.dataset.tab)),
 );
 
 function lock() {
@@ -123,6 +123,8 @@ function lock() {
   $("tabs").hidden = $("lock").hidden = $("mqtt-chip").hidden = $("demo-chip").hidden = true;
   for (const t of TABS) $(`tab-${t}`).hidden = true;
   $("dialog").close();
+  $("setup-dialog").close();
+  setupFlow = new SetupFlow();
 }
 $("lock").addEventListener("click", lock);
 
@@ -174,7 +176,8 @@ async function bootstrap() {
   }
 }
 $("retry-session").addEventListener("click", bootstrap);
-bootstrap();
+// Start only after all controllers below have initialized.
+
 
 async function refresh() {
   if (refreshing || !token) return;
@@ -186,9 +189,16 @@ async function refresh() {
     const snapshot = await api("state");
     if (token !== requestToken || version !== sessionVersion) return;
     state = snapshot;
+    if ($("setup-error").textContent.startsWith("Connection interrupted.")) $("setup-error").hidden = true;
     render();
   } catch (error) {
     toast(error.message);
+    if ($("setup-dialog").open) {
+      $("setup-error").textContent = "Connection interrupted. We’ll keep checking; your progress is saved for this visit.";
+      $("setup-error").hidden = false;
+      $("setup-next").disabled = true;
+      $("setup-devices").querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    }
     if (state) {
       $("health").textContent = `${error.message} Displayed readings may be stale.`;
       $("health").hidden = false;
@@ -212,6 +222,7 @@ function render() {
   renderDevices();
   renderActivity();
   renderGateway();
+  renderSetup();
   if (selectedMac && $("dialog").open) fillDialog();
 }
 
@@ -241,7 +252,7 @@ function renderDevices() {
   });
   const current = [...$("devices").children];
   if (current.length !== cards.length || cards.some((c, i) => c !== current[i])) $("devices").replaceChildren(...cards);
-  $("devices-empty").hidden = state.devices.length !== 0;
+  $("devices-empty").hidden = state.devices.some((d) => d.adopted) || !!state.setup?.blocked;
   $("search-empty").hidden = !state.devices.length || devices.length !== 0;
   for (const mac of cardNodes.keys()) if (!state.devices.some((d) => d.mac === mac)) cardNodes.delete(mac);
   const recent = state.devices.filter((d) => d.last_seen && Date.now() / 1000 - d.last_seen < 60).length;
@@ -351,3 +362,176 @@ $("diagnostics").addEventListener("click", () => {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
+
+// ---- first sensor setup -----------------------------------------------------
+let setupFlow = new SetupFlow();
+const setupGuide = "https://github.com/alxgmpr/superlink2mqtt/blob/codex/ha-setup-recovery/homeassistant/superlink2mqtt/DOCS.md";
+const art = {
+  pi: '<rect x="43" y="45" width="104" height="76" rx="12" class="art-board"/><rect x="74" y="66" width="34" height="32" rx="5"/><path d="M80 60v6m10-6v6m10-6v6M80 98v6m10-6v6m10-6v6M68 74h6m-6 14h6m34-14h6m-6 14h6M55 65h10m-10 10h6m-6 10h6m-6 10h10M119 58h16v14h-16zM119 83h16v22h-16z"/><circle cx="54" cy="111" r="2"/><path d="M133 45V22m-7 5 7-5 7 5"/>',
+  home: '<path d="m344 77 42-35 42 35v43h-84z" class="art-board"/><path d="M374 120V91h24v29M356 76h11v12h-11zM404 76h11v12h-11z"/><circle cx="386" cy="65" r="5"/>',
+  sensor: '<rect x="64" y="36" width="42" height="89" rx="13" class="art-board"/><rect x="115" y="49" width="19" height="62" rx="8"/><circle cx="85" cy="53" r="3" class="art-light"/><path d="M78 106h14"/>',
+  waves: '<path d="M166 71q12 12 0 24m12-35q23 23 0 46m13-58q35 35 0 70" class="art-signal"/>',
+};
+const diagrams = [
+  ["Your Pi radio connects to Home Assistant over your network", `${art.pi}${art.home}<path d="M166 83h160" class="art-link"/><rect x="216" y="66" width="60" height="34" rx="17" class="art-pill"/><text x="246" y="88">LAN</text><text x="96" y="150">Pi + SX1302</text><text x="386" y="150">Home Assistant</text>`],
+  ["MQTT carries readings from SuperLink to Home Assistant", `<rect x="42" y="48" width="94" height="70" rx="13" class="art-board"/><path d="M77 72q-10 12 0 24m24-24q10 12 0 24M70 65q-17 19 0 38m38-38q17 19 0 38"/><circle cx="89" cy="84" r="4"/><path d="M153 83h50m74 0h50" class="art-link"/><rect x="209" y="51" width="62" height="64" rx="12" class="art-board"/><path d="M222 68h36m-36 16h36m-36 16h36"/><circle cx="229" cy="68" r="2"/><circle cx="250" cy="84" r="2"/>${art.home}<text x="89" y="150">SuperLink</text><text x="240" y="150">MQTT broker</text><text x="386" y="150">Home Assistant</text>`],
+  ["A sensor in pairing mode is discovered by your radio", `${art.sensor}${art.waves}<g transform="translate(263 0)">${art.pi}</g><text x="99" y="150">Your sensor</text><text x="359" y="150">Your radio</text><path d="M228 83h58" class="art-link"/>`],
+  ["A sensor reading reaches your Home Assistant device", `${art.sensor}<path d="M155 83h167" class="art-link"/><circle cx="240" cy="83" r="21" class="art-board"/><path d="m230 83 7 7 14-15" class="art-signal"/>${art.home}<text x="99" y="150">First reading</text><text x="386" y="150">Home Assistant</text>`],
+];
+function drawSetup(index) {
+  const [description, content] = diagrams[index];
+  $("setup-art").innerHTML = `<svg viewBox="0 0 480 170" role="img" aria-label="${description}"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${content}</g></svg>`;
+}
+function setupLink(text, href, external = false) {
+  const a = el("a", text);
+  a.href = href;
+  a.target = external ? "_blank" : "_top";
+  a.rel = "noopener noreferrer";
+  return a;
+}
+function changeSetup(index) {
+  setupFlow.index = index;
+  delete $("setup-devices").dataset.signature;
+  $("setup-help").open = false;
+  renderSetup();
+  $("setup-title").focus();
+}
+function dismissSetup() {
+  setupFlow.dismiss();
+  $("setup-dialog").close();
+}
+$("setup-close").addEventListener("click", dismissSetup);
+$("setup-dialog").addEventListener("cancel", () => setupFlow.dismiss());
+$("setup-open").addEventListener("click", () => {
+  setupFlow.opened = true;
+  renderSetup();
+});
+$("setup-back").addEventListener("click", () => changeSetup(setupFlow.index - 1));
+$("setup-next").addEventListener("click", () => {
+  if (!setupFlow.ready(state)) return;
+  if (setupFlow.index === 3) {
+    dismissSetup();
+    tab("devices");
+  } else changeSetup(setupFlow.index + 1);
+});
+async function pairFromSetup(mac) {
+  if (setupFlow.pendingMac || !radioReady() || demo()) return;
+  const version = sessionVersion;
+  setupFlow.selectedMac = mac;
+  setupFlow.pendingMac = mac;
+  $("setup-error").hidden = true;
+  renderSetup();
+  try {
+    await api(`devices/${mac}/command`, { command: "adopt" });
+    if (version === sessionVersion) await refresh();
+  } catch (error) {
+    if (version !== sessionVersion) return;
+    if (error.status === 400) setupFlow.pendingMac = null;
+    $("setup-error").textContent = error.message;
+    $("setup-error").hidden = false;
+  }
+}
+function renderSetup() {
+  setupFlow.observe(state);
+  if (!setupFlow.opened) return;
+  const dialog = $("setup-dialog");
+  if (!dialog.open) {
+    $("dialog").close();
+    dialog.showModal();
+  }
+  const index = setupFlow.index;
+  const device = state.devices.find((d) => d.mac === setupFlow.selectedMac);
+  if (device?.has_session || device?.adopted) setupFlow.pendingMac = null;
+  const ready = setupFlow.ready(state);
+  const title = ["Connect your radio", "Connect MQTT", "Pair your first sensor", ready ? "Your sensor is ready" : "Try your sensor"][index];
+  const description = [
+    "Power your Pi + SX1302 and connect it to your home network.",
+    "MQTT carries sensor readings into Home Assistant.",
+    "Put a new or factory-reset sensor in pairing mode, close to your radio.",
+    ready ? "A reading arrived. You can now find this sensor in Devices." : "Open the door, trigger motion, or wake the sensor. We’ll wait for its first reading.",
+  ][index];
+  const changed = dialog.dataset.step !== String(index);
+  if (changed) {
+    dialog.dataset.step = String(index);
+    drawSetup(index);
+    $("setup-help").open = false;
+  }
+  $("setup-counter").textContent = `STEP ${index + 1} OF 4`;
+  $("setup-title").textContent = title;
+  $("setup-description").textContent = description;
+  document.querySelectorAll(".setup-progress li").forEach((li, i) => {
+    li.classList.toggle("complete", i < index);
+    if (i === index) li.setAttribute("aria-current", "step");
+    else li.removeAttribute("aria-current");
+  });
+  $("setup-back").hidden = index === 0;
+  $("setup-next").hidden = index === 2;
+  $("setup-next").disabled = !ready;
+  $("setup-next").textContent = index === 3 ? "View devices" : "Continue";
+  const pending = state.setup?.missing || [];
+  let message = index === 0 ? (ready ? (radioReady() ? "Radio connected" : "Radio configuration ready") : "Waiting for your radio") :
+    index === 1 ? (ready ? "MQTT connected" : "Waiting for MQTT") :
+    index === 2 ? (!radioReady() ? "Radio disconnected. Pairing will be available when it reconnects." : device?.has_session || setupFlow.pendingMac ? "Pairing… keep the sensor awake" : state.devices.some((d) => !d.adopted && !d.has_session) ? "Choose a sensor to pair" : "Listening for sensors…") :
+    ready ? `${device.name} · ${format(device.properties[0])}` : "Waiting for a reading…";
+  if (index === 3 && state.mqtt !== "connected") message = "MQTT disconnected. Reconnect your broker to finish.";
+  if (index === 3 && !radioReady()) message = "Radio disconnected. Waiting for it to reconnect.";
+  if (index === 0 && pending.includes("radio_host")) message = "Add your Pi’s address in app Configuration";
+  else if (index === 0 && pending.some((name) => name !== "mqtt")) message = "Finish the radio connection below";
+  const status = $("setup-status");
+  status.classList.toggle("ready", ready);
+  status.textContent = message;
+  const candidates = index === 2 ? state.devices.filter((d) => !d.adopted) : [];
+  const signature = JSON.stringify([index, candidates.map((d) => [d.mac, d.name, d.has_session]), setupFlow.pendingMac, radioReady()]);
+  if ($("setup-devices").dataset.signature !== signature) {
+    $("setup-devices").dataset.signature = signature;
+    $("setup-devices").replaceChildren(...candidates.map((d) => {
+      const row = el("div", null, "setup-device");
+      const name = el("div", d.name);
+      name.append(el("small", macLabel(d.mac)));
+      const button = el("button", d.has_session || d.mac === setupFlow.pendingMac ? "Pairing…" : "Pair", "filled");
+      button.disabled = !radioReady() || demo() || d.has_session || !!setupFlow.pendingMac;
+      button.addEventListener("click", () => pairFromSetup(d.mac));
+      row.append(name, button);
+      return row;
+    }));
+  }
+  const helpSignature = JSON.stringify([index, ingressSession, state.backend, pending]);
+  if ($("setup-help-body").dataset.signature !== helpSignature) {
+    $("setup-help-body").dataset.signature = helpSignature;
+    $("setup-help-title").textContent = ["Connection help", "Set up MQTT", "Sensor not appearing?", "Check in Home Assistant"][index];
+    const help = $("setup-help-body");
+    help.replaceChildren();
+    if (index === 0) {
+      if (ingressSession) {
+        help.append(el("p", "Set radio_host to your Pi’s IP address in app Configuration."),
+          setupLink("Open app configuration ↗", "/config/app/local_superlink2mqtt/config"));
+      }
+      if (state.backend === "sx1302-ssh") {
+        help.append(el("p", "The Pi needs its radio service and a dedicated SSH connection. Use the radio connection guide to prepare them."));
+        if (pending.length) {
+          const list = el("ul");
+          const labels = {radio_host: "Pi address", radio_ed25519: "Radio SSH key", known_hosts: "Verified Pi host key", "bridge.yaml": "Gateway configuration"};
+          for (const item of pending) if (labels[item]) list.append(el("li", `${labels[item]} — needed`));
+          help.append(list);
+        }
+      } else help.append(el("p", "Check radio power, antenna and the SX1302 service. Only one process can use the radio."));
+      help.append(setupLink("Radio connection guide ↗", `${setupGuide}#install-and-provision-the-radio`, true));
+    } else if (index === 1) {
+      help.append(el("p", ingressSession ? "Start the Mosquitto broker app. This app picks up its credentials automatically." : "Set the MQTT broker in your bridge configuration, then restart."),
+        el("p", "Add the MQTT integration in Home Assistant, using that same broker."));
+      if (ingressSession) help.append(setupLink("Open integrations ↗", "/config/integrations"));
+      else help.append(setupLink("MQTT setup guide ↗", `${setupGuide}#before-starting`, true));
+    } else if (index === 2) {
+      help.append(el("p", "Follow your model’s pairing instructions and check its battery. A sensor already paired to UniFi needs a factory reset first."),
+        el("p", "Resetting clears the previous pairing. Fresh keys are created when you pair here."));
+    } else {
+      help.append(el("p", "In the MQTT integration, find your sensor and check that its entity changes when you operate it."));
+      if (ingressSession) help.append(setupLink("Open integrations ↗", "/config/integrations"));
+      help.append(el("p", "A connected radio alone doesn’t confirm a sensor reading. Keep the sensor awake if we’re still waiting."));
+    }
+  }
+  if (changed) {
+    $("setup-title").focus();
+  }
+}
+bootstrap();
