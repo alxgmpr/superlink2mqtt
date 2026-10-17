@@ -15,7 +15,7 @@ from superlink.bridge.extraction.jobs import ExtractionJobs
 from superlink.bridge.extraction import jobs, ssh
 from superlink.bridge.extraction.build import NATIVE
 from superlink.bridge.config import DEFAULT_PAIRING_KEY
-from tests.test_management import bundle, running_web, request
+from tests.test_management import bundle
 
 ITEM = bundle()["devices"][0]
 # Disposable fixture value: this suite never opens a network connection.
@@ -262,23 +262,7 @@ def test_expired_keys_cannot_be_imported_and_are_released(monkeypatch):
     finally: manager.close()
 
 
-def test_http_extraction_preview_import_and_demo_guards(monkeypatch):
-    manager, job = ready_jobs(monkeypatch)
-    with running_web() as (runtime, web):
-        web.extraction.close()
-        web.extraction = manager
-        assert request(web, "GET", "/api/extraction", token=None)[0] == 401
-        status, encoded, _ = request(web, "POST", "/api/extraction/preview", {"job_id": job["id"]})
-        body = json.loads(encoded)
-        assert status == 200 and body["can_import"]
-        assert ITEM["key"] not in json.dumps(body)
-        assert request(web, "POST", "/api/extraction/import", {"job_id": job["id"]})[0] == 400
-        assert len(runtime.store.load_all()) == 0
-        status, encoded, _ = request(web, "POST", "/api/extraction/import", {"job_id": job["id"], "confirmed": True})
-        body = json.loads(encoded)
-        assert status == 200 and body["imported"] == 1
-        assert manager.document is None
-        assert request(web, "POST", "/api/extraction/import", {"job_id": job["id"], "confirmed": True})[0] == 400
+def test_research_extraction_demo_guard():
     with pytest.raises(ValueError, match="Demo"):
         ExtractionJobs(demo=True).probe({"host": "192.168.1.20"})
 

@@ -1,5 +1,4 @@
 """Migration, authenticated HTTP and runtime ownership; no physical hardware."""
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import http.client
 import json
@@ -40,7 +39,7 @@ def test_ingress_port_rejects_direct_clients_even_with_token():
     web.start()
     try:
         for method, path in [("GET", "/"), ("GET", "/api/session"),
-                             ("GET", "/api/state"), ("POST", "/api/import")]:
+                             ("GET", "/api/state"), ("POST", f"/api/devices/{SENSOR_MAC.hex()}/command")]:
             conn = http.client.HTTPConnection(*web.address)
             conn.request(method, path, headers={"Authorization": f"Bearer {TOKEN}",
                                                "X-Forwarded-For": "172.30.32.2"})
@@ -64,7 +63,7 @@ def runtime(store=None):
 def test_import_reconnects_with_real_crypto_after_persistence(tmp_path):
     store = JsonDeviceStore(str(tmp_path / "devices.json"))
     rt = runtime(store)
-    Management(rt).import_devices({"document": bundle(), "confirmed": True})
+    rt.core.import_devices(parse_import(bundle()))
     record, = JsonDeviceStore(store.path).load_all()
     restored = DeviceSession(record, GW_MAC, DEFAULT_PAIRING_KEY)
     restored.start(100)
@@ -90,7 +89,7 @@ def test_invalid_import_is_safe_and_never_echoes_keys(field, value):
     doc["devices"][0][field] = value
     rt = runtime()
     with pytest.raises(ValueError) as error:
-        Management(rt).import_devices({"document": doc, "confirmed": True})
+        rt.core.import_devices(parse_import(doc))
     assert "SESSION-SECRET" not in str(error.value)
     assert PRIMARY_KEY.hex() not in str(error.value)
     assert rt.store.load_all() == []
@@ -102,7 +101,7 @@ def test_duplicate_or_partial_bundle_never_imports_any_device():
     doc = bundle()
     doc["devices"].append(dict(doc["devices"][0]))
     with pytest.raises(ValueError, match="duplicate"):
-        Management(rt).import_devices({"document": doc, "confirmed": True})
+        rt.core.import_devices(parse_import(doc))
     assert rt.store.load_all() == []
     doc["devices"][1] = {"mac": "aabbccddeeff"}
     with pytest.raises(ValueError, match="Device 2"):
@@ -126,15 +125,14 @@ def test_import_backups_private_atomic_store_and_refuses_overwrite(tmp_path):
     store.save(other)
     before = path.read_bytes()
     management = Management(runtime(store))
-    management.import_devices({"document": bundle(), "confirmed": True})
+    management.runtime.core.import_devices(parse_import(bundle()))
     backup, = tmp_path.glob("devices.json.backup-*")
     assert backup.read_bytes() == before
     assert path.stat().st_mode & 0o777 == 0o600
     assert backup.stat().st_mode & 0o777 == 0o600
-    assert not management.preview(bundle())["can_import"]
     current = path.read_bytes()
     with pytest.raises(ValueError, match="existing"):
-        management.import_devices({"document": bundle(), "confirmed": True})
+        management.runtime.core.import_devices(parse_import(bundle()))
     assert path.read_bytes() == current
     assert len(list(tmp_path.glob("devices.json.backup-*"))) == 1
 
@@ -151,19 +149,18 @@ def test_failed_replace_preserves_registry_and_no_partial_session(tmp_path, monk
     monkeypatch.setattr(os, "replace", fail)
     rt = runtime(store)
     with pytest.raises(OSError):
-        Management(rt).import_devices({"document": bundle(), "confirmed": True})
+        rt.core.import_devices(parse_import(bundle()))
     assert open(store.path, "rb").read() == before
     assert not rt.core.has_session(SENSOR_MAC)
     assert not list(tmp_path.glob(".superlink-*"))
 
 
-def test_stale_preview_rechecks_conflicts_and_snapshots_hide_keys():
+def test_existing_device_conflicts_and_snapshots_hide_keys():
     rt = runtime()
     management = Management(rt)
-    assert management.preview(bundle())["can_import"]
-    management.import_devices({"document": bundle(), "confirmed": True})
+    management.runtime.core.import_devices(parse_import(bundle()))
     with pytest.raises(ValueError):
-        management.import_devices({"document": bundle(), "confirmed": True})
+        management.runtime.core.import_devices(parse_import(bundle()))
     snapshot = management.snapshot()
     assert snapshot["devices"][0]["state"] == "awaiting_reconnect"
     encoded = json.dumps(snapshot)
@@ -174,7 +171,7 @@ def test_stale_preview_rechecks_conflicts_and_snapshots_hide_keys():
 def test_cancelled_request_cannot_mutate_later():
     rt = runtime()
     management = Management(rt)
-    future = rt.submit_management(lambda: management.import_devices({"document": bundle(), "confirmed": True}))
+    future = rt.submit_management(lambda: management.runtime.core.import_devices(parse_import(bundle())))
     assert future.cancel()
     rt.poll_once(time.monotonic())
     assert rt.store.load_all() == []
@@ -214,10 +211,10 @@ def test_http_auth_origin_limits_and_safe_static_paths():
     with running_web() as (_, web):
         assert request(web, "GET", "/api/state", token=None)[0] == 401
         assert request(web, "GET", "/api/state", token="wrong")[0] == 401
-        assert request(web, "POST", "/api/import", {}, headers={"Origin": "https://evil.example"})[0] == 403
-        assert request(web, "POST", "/api/import", {}, headers={"Origin": "http://["})[0] == 403
-        assert request(web, "POST", "/api/import", {}, headers={"Content-Type": "text/plain"})[0] == 415
-        assert request(web, "POST", "/api/import", {"x": "a" * 131072})[0] == 413
+        assert request(web, "POST", f"/api/devices/{SENSOR_MAC.hex()}/command", {}, headers={"Origin": "https://evil.example"})[0] == 403
+        assert request(web, "POST", f"/api/devices/{SENSOR_MAC.hex()}/command", {}, headers={"Origin": "http://["})[0] == 403
+        assert request(web, "POST", f"/api/devices/{SENSOR_MAC.hex()}/command", {}, headers={"Content-Type": "text/plain"})[0] == 415
+        assert request(web, "POST", f"/api/devices/{SENSOR_MAC.hex()}/command", {"x": "a" * 131072})[0] == 413
         assert request(web, "GET", "/../store.py")[0] == 404
         code, body, headers = request(web, "GET", "/", token=None)
         assert code == 200 and b"superlink" in body
@@ -234,34 +231,45 @@ def test_ingress_bootstrap_and_api_use_supervisor_auth(monkeypatch):
         status, body, _ = request(web, "GET", "/api/session", token=None)
         assert status == 200 and json.loads(body) == {"ingress": True}
         assert request(web, "GET", "/api/state", token=None)[0] == 200
-        status, body, _ = request(web, "POST", "/api/import/preview",
-                                  {"document": bundle()}, token=None)
-        assert status == 200 and json.loads(body)["can_import"]
 
 
-def test_http_preview_import_conflict_command_and_state():
+@pytest.mark.parametrize("ingress", [False, True])
+def test_removed_import_and_extraction_routes_cannot_mutate_devices(monkeypatch, ingress):
+    import superlink.bridge.web as module
+    monkeypatch.setattr(module, "is_ingress", lambda config, peer: config.ingress)
     with running_web() as (rt, web):
-        code, body, _ = request(web, "POST", "/api/import/preview", {"document": bundle()})
-        assert code == 200 and json.loads(body)["can_import"]
+        web.config.ingress = ingress
+        token = None if ingress else TOKEN
+        assert not hasattr(web, "extraction")
+        assert request(web, "GET", "/api/extraction", token=token)[0] == 404
+        for path in ("import", "import/preview", "extraction/probe", "extraction/start",
+                     "extraction/recover", "extraction/preview", "extraction/import"):
+            assert request(web, "POST", f"/api/{path}",
+                           {"document": bundle(), "confirmed": True}, token=token)[0] == 404
         assert rt.store.load_all() == []
-        assert request(web, "POST", "/api/import", {"document": bundle()})[0] == 400
-        assert request(web, "POST", "/api/import", {"document": bundle(), "confirmed": True})[0] == 200
-        assert request(web, "POST", "/api/import", {"document": bundle(), "confirmed": True})[0] == 400
-        assert request(web, "POST", f"/api/devices/{SENSOR_MAC.hex()}/command", {"command": []})[0] == 400
-        code, body, _ = request(web, "POST", f"/api/devices/{SENSOR_MAC.hex()}/command", {"command": "locate"})
+        assert not rt.core.has_session(SENSOR_MAC)
+
+
+@pytest.mark.parametrize("ingress", [False, True])
+def test_http_pair_command_and_state(monkeypatch, ingress):
+    import superlink.bridge.web as module
+    monkeypatch.setattr(module, "is_ingress", lambda config, peer: config.ingress)
+    from tests.support.sensor_peer import discovery
+    with running_web() as (rt, web):
+        web.config.ingress = ingress
+        token = None if ingress else TOKEN
+        rt.submit_management(lambda: rt.core.feed(discovery(), 1, time.monotonic())).result(2)
+        path = f"/api/devices/{SENSOR_MAC.hex()}/command"
+        assert request(web, "POST", path, {"command": []}, token=token)[0] == 400
+        code, body, _ = request(web, "POST", path, {"command": "adopt"}, token=token)
         assert code == 200 and json.loads(body)["state"] == "queued"
-        snapshot = request(web, "GET", "/api/state")[1]
+        assert rt.core.has_session(SENSOR_MAC)
+        assert request(web, "POST", path, {"command": "adopt"}, token=token)[0] == 400
+        assert request(web, "POST", path, {"command": "locate"}, token=token)[0] == 400
+        snapshot = request(web, "GET", "/api/state", token=token)[1]
         assert PRIMARY_KEY.hex().encode() not in snapshot
-        assert b"awaiting_reconnect" in snapshot
+        assert b"Adopt queued" in snapshot
         assert b"Sensor response" not in snapshot
-
-
-def test_concurrent_imports_have_one_winner():
-    with running_web() as (_, web):
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            results = list(pool.map(lambda _: request(web, "POST", "/api/import",
-                {"document": bundle(), "confirmed": True})[0], range(2)))
-        assert sorted(results) == [200, 400]
 
 
 def test_web_config_requires_private_token_and_valid_port(tmp_path, monkeypatch):
@@ -278,3 +286,17 @@ def test_web_config_requires_private_token_and_valid_port(tmp_path, monkeypatch)
         WebConfig(TOKEN, port=True)
     with pytest.raises(ValueError):
         WebConfig(TOKEN + "\n")
+
+
+def test_pairing_blocks_device_commands_until_persisted_adoption():
+    from superlink.bridge.events import DeviceStateEvent
+    from tests.fixtures.captured_frames import DISCOVERY_FRAME_RAW
+    rt = runtime()
+    manager = Management(rt)
+    rt.core.feed(DISCOVERY_FRAME_RAW, 1, 100)
+    mac = next(iter(manager.observed))
+    assert manager.command(mac.hex(), 'adopt')['state'] == 'queued'
+    with pytest.raises(ValueError, match='pairing'):
+        manager.command(mac.hex(), 'reboot')
+    assert manager.snapshot()['devices'][0]['has_session']
+    assert not manager.snapshot()['devices'][0]['adopted']

@@ -24,6 +24,15 @@ class FakeMqttClient:
         # registered in the handler are exercised (including on reconnect).
         self.fire_on_connect()
 
+    def connect_async(self, host, port=1883, keepalive=60):
+        self.connect(host, port, keepalive)
+
+    def is_connected(self):
+        return self.connected
+
+    def tls_set(self):
+        self.tls = True
+
     def fire_on_connect(self):
         """Simulate a (re)connect: invoke on_connect with the paho v2 signature."""
         if self.on_connect is not None:

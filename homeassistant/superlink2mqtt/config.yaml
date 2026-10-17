@@ -1,6 +1,6 @@
 name: superlink2mqtt
 slug: superlink2mqtt
-version: "0.2.0"
+version: "0.2.3"
 description: SuperLink sensors over a remote SX1302 radio
 arch:
   - amd64
@@ -14,7 +14,7 @@ watchdog: "tcp://[HOST]:8099"
 panel_icon: mdi:radio-tower
 panel_title: superlink2mqtt
 services:
-  - mqtt:need
+  - mqtt:want
 map:
   - type: app_config
     read_only: false

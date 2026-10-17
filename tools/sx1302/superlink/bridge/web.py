@@ -13,7 +13,6 @@ import threading
 from urllib.parse import urlsplit
 
 from .management import Management
-from .extraction.jobs import ExtractionJobs
 
 log = logging.getLogger("superlink.web")
 ASSETS = Path(__file__).with_name("frontend")
@@ -26,9 +25,8 @@ def is_ingress(config, peer):
 
 
 class ManagementServer:
-    def __init__(self, runtime, config):
-        self.management = Management(runtime)
-        self.extraction = ExtractionJobs(demo=runtime.demo)
+    def __init__(self, runtime, config, *, management=None):
+        self.management = management if management is not None else Management(runtime)
         self.runtime = runtime
         self.config = config
         owner = self
@@ -95,14 +93,6 @@ class ManagementServer:
                 else:
                     self.reply(200, result)
 
-            def extraction_action(self, operation):
-                try:
-                    self.reply(200, operation())
-                except ValueError as exc:
-                    self.reply(400, {"error": str(exc)})
-                except Exception:
-                    self.reply(500, {"error": "Extraction operation failed"})
-
             def do_GET(self):
                 if owner.config.ingress and not is_ingress(owner.config, self.client_address[0]):
                     self.reply(403, {"error": "Use Home Assistant ingress"})
@@ -118,12 +108,10 @@ class ManagementServer:
                     if self.authorized():
                         self.execute(owner.management.snapshot)
                     return
-                if path == "/api/extraction":
-                    if self.authorized():
-                        self.extraction_action(owner.extraction.status)
-                    return
                 assets = {"/": ("index.html", "text/html; charset=utf-8"),
                           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                          "/request.js": ("request.js", "text/javascript; charset=utf-8"),
+                          "/onboarding.js": ("onboarding.js", "text/javascript; charset=utf-8"),
                           "/style.css": ("style.css", "text/css; charset=utf-8")}
                 if path not in assets:
                     self.reply(404, {"error": "Not found"})
@@ -152,23 +140,7 @@ class ManagementServer:
                     self.reply(400, {"error": "Expected a JSON object"})
                     return
                 path = urlsplit(self.path).path
-                if path == "/api/extraction/probe":
-                    self.extraction_action(lambda: owner.extraction.probe(body))
-                elif path == "/api/extraction/start":
-                    self.extraction_action(lambda: owner.extraction.start(body))
-                elif path == "/api/extraction/recover":
-                    self.extraction_action(lambda: owner.extraction.recover(body))
-                elif path == "/api/extraction/preview":
-                    self.execute(lambda: owner.extraction.use_document(body.get("job_id"), owner.management.preview))
-                elif path == "/api/extraction/import":
-                    self.execute(lambda: owner.extraction.use_document(body.get("job_id"),
-                        lambda document: owner.management.import_devices({"document": document,
-                            "confirmed": body.get("confirmed")}), consume=True))
-                elif path == "/api/import/preview":
-                    self.execute(lambda: owner.management.preview(body.get("document")))
-                elif path == "/api/import":
-                    self.execute(lambda: owner.management.import_devices(body))
-                elif path.startswith("/api/devices/") and path.endswith("/command"):
+                if path.startswith("/api/devices/") and path.endswith("/command"):
                     parts = path.split("/")
                     if len(parts) != 5:
                         self.reply(404, {"error": "Not found"})
@@ -190,7 +162,6 @@ class ManagementServer:
         log.info("Management UI listening on %s:%s", *self.address)
 
     def stop(self):
-        self.extraction.close()
         if self.thread.is_alive():
             self.server.shutdown()
             self.thread.join(timeout=2)

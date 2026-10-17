@@ -178,8 +178,7 @@ button.filled:disabled {
   font-size: 12px;
   margin-bottom: 4px;
 }
-input:not([type="checkbox"]),
-textarea {
+input {
   width: 100%;
   font: inherit;
   color: var(--text);
@@ -189,31 +188,10 @@ textarea {
   border-radius: 4px 4px 0 0;
   padding: 10px 12px;
 }
-input:focus,
-textarea:focus {
+input:focus {
   outline: none;
   border-bottom: 2px solid var(--primary);
 }
-textarea {
-  font: 12px/1.4 ui-monospace, Menlo, monospace;
-  resize: vertical;
-}
-.check {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  margin: 12px 0;
-}
-.check input {
-  margin-top: 3px;
-  accent-color: var(--primary);
-}
-.row {
-  display: grid;
-  grid-template-columns: 1fr 96px;
-  gap: 12px;
-}
-
 /* Chips + badges */
 .chip {
   display: inline-flex;
@@ -385,58 +363,6 @@ textarea {
   color: var(--muted);
   font-size: 12px;
 }
-.list .conflict {
-  color: var(--error);
-}
-
-/* Import */
-.import {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 16px;
-  align-items: start;
-}
-.steps {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: step;
-}
-.steps > li {
-  position: relative;
-  padding: 0 0 20px 40px;
-  counter-increment: step;
-}
-.steps > li::before {
-  content: counter(step);
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--hover);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
-}
-.steps > li.current::before {
-  background: var(--primary);
-  color: var(--on-primary);
-}
-.steps > li.done::before {
-  content: "✓";
-  background: var(--ok);
-  color: #fff;
-}
-.steps h3 {
-  font-size: 15px;
-  font-weight: 500;
-  margin-bottom: 8px;
-  line-height: 24px;
-}
 .callout {
   margin: 8px 0;
   padding: 12px;
@@ -515,4 +441,54 @@ dialog .card-actions {
 }
 .device * {
   pointer-events: none;
+}
+
+/* Focused first-device setup */
+#setup-dialog {
+  width: min(580px, calc(100% - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  border: 1px solid var(--divider);
+}
+#setup-dialog::backdrop { background: rgb(0 0 0 / 60%); backdrop-filter: blur(3px); }
+.setup-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px 0 28px; }
+.eyebrow { color: var(--muted); font-size: 11px; letter-spacing: .12em; font-weight: 600; }
+.setup-progress { display: flex; list-style: none; gap: 6px; padding: 0 28px; margin: 12px 0 0; }
+.setup-progress li { flex: 1; border-top: 3px solid var(--divider); padding-top: 8px; font-size: 12px; color: var(--muted); }
+.setup-progress li[aria-current="step"] { border-color: var(--primary); color: var(--primary-text); font-weight: 600; }
+.setup-progress li.complete { border-color: var(--ok); }
+.setup-body { padding: 16px 28px 24px; }
+.setup-art { border-radius: 16px; background: linear-gradient(135deg, rgb(3 169 244 / 7%), var(--hover)); margin: 0 0 24px; padding: 14px 0; color: var(--primary-text); }
+.setup-art svg { display: block; width: 100%; height: auto; }
+.setup-art .art-board { fill: var(--card); }
+.setup-art .art-light { fill: var(--ok); stroke: var(--ok); }
+.setup-art .art-link { stroke-dasharray: 4 8; opacity: .65; }
+.setup-art .art-pill { fill: var(--card); stroke: var(--divider); }
+.setup-art .art-signal { stroke: var(--primary); }
+.setup-art text { fill: var(--muted); stroke: none; text-anchor: middle; font-size: 14px; font-family: inherit; }
+#setup-title { font-size: 26px; line-height: 1.2; font-weight: 500; letter-spacing: -.025em; }
+#setup-description { color: var(--muted); line-height: 1.65; margin: 12px 0 20px; max-width: 44ch; }
+.setup-status { display: flex; align-items: center; gap: 10px; background: var(--hover); border-radius: 10px; padding: 12px 14px; font-size: 13px; }
+.setup-status::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+.setup-status.ready::before { background: var(--ok); }
+.setup-device { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--divider); border-radius: 12px; padding: 12px; margin-top: 10px; }
+.setup-device > div { min-width: 0; overflow-wrap: anywhere; }
+.setup-device small { display: block; color: var(--muted); margin-top: 3px; font-size: 11px; }
+.setup-device button { flex: none; min-height: 40px; }
+.setup-error { color: var(--error); }
+#setup-help { margin-top: 18px; border: 0; padding: 0; }
+#setup-help summary { font-size: 13px; }
+#setup-help-body { color: var(--muted); font-size: 13px; line-height: 1.6; }
+#setup-help-body p { margin: 8px 0; }
+#setup-help-body a { color: var(--primary-text); display: inline-block; padding: 5px 0; }
+.setup-actions { display: flex; align-items: center; gap: 12px; padding: 16px 28px; border-top: 1px solid var(--divider); position: sticky; bottom: 0; background: var(--card); }
+.setup-actions .grow { flex: 1; }
+.setup-actions button { min-height: 42px; border-radius: 21px; }
+@media (max-width: 420px) {
+  .setup-body { padding: 16px 20px 20px; }
+  .setup-top { padding-left: 20px; }
+  .setup-progress { padding: 0 20px; }
+  .setup-actions { padding: 12px 20px; }
+  #setup-title { font-size: 23px; }
+  .setup-art { margin-bottom: 20px; }
 }

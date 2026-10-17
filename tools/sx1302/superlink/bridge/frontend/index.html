@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SuperLink · superlink2mqtt</title>
     <link rel="stylesheet" href="style.css" />
+    <script src="request.js" defer></script>
+    <script src="onboarding.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -21,17 +23,22 @@
       </div>
       <nav class="tabs" role="tablist" id="tabs" hidden>
         <button class="tab" role="tab" data-tab="devices">Devices</button>
-        <button class="tab" role="tab" data-tab="import">Import</button>
         <button class="tab" role="tab" data-tab="activity">Activity</button>
         <button class="tab" role="tab" data-tab="gateway">Gateway</button>
       </nav>
     </header>
 
     <main>
-      <section id="login" class="card login">
+      <div id="health" class="callout error" role="status" hidden></div>
+      <section id="session-status" class="card card-content" role="status">
+        <p id="session-message">Checking access… Home Assistant handles sign-in when opened from its sidebar.</p>
+        <button id="retry-session">Retry connection</button>
+      </section>
+      <section id="login" class="card login" hidden>
         <form id="login-form">
           <div class="card-header">Unlock</div>
           <div class="card-content">
+            <p>This is the standalone bridge login. Use its SUPERLINK_WEB_TOKEN, not a Home Assistant access token. In Home Assistant, open the app from the sidebar to sign in automatically.</p>
             <label class="field"
               ><span>Access token (SUPERLINK_WEB_TOKEN)</span
               ><input id="token" type="password" autocomplete="off" required
@@ -49,96 +56,11 @@
           <span class="secondary" id="device-count"></span>
         </div>
         <div class="grid" id="devices"></div>
+        <p id="search-empty" class="empty" hidden>No matching devices. Clear or change your search.</p>
         <div class="card empty" id="devices-empty" hidden>
-          <p>No devices yet.</p>
-          <button class="filled" data-goto="import">Import sensors</button>
-        </div>
-      </section>
-
-      <section id="tab-import" class="import" hidden>
-        <div class="card">
-          <div class="card-header">Extract from a UniFi gateway</div>
-          <div class="card-content">
-            <ol class="steps">
-              <li id="step-connect">
-                <h3>Connect</h3>
-                <form id="probe-form">
-                  <div class="row">
-                    <label class="field"
-                      ><span>Gateway IP</span
-                      ><input id="source-host" placeholder="192.168.1.20" autocomplete="off" required
-                    /></label>
-                    <label class="field"
-                      ><span>SSH port</span
-                      ><input id="source-port" type="number" min="1" max="65535" value="22" required
-                    /></label>
-                  </div>
-                  <button id="probe" type="submit">Check host key</button>
-                </form>
-              </li>
-              <li id="step-verify">
-                <h3>Verify</h3>
-                <div id="verify" hidden>
-                  <div class="callout"><code id="fingerprint"></code></div>
-                  <label class="check"
-                    ><input id="confirm-source" type="checkbox" /><span
-                      >The fingerprint matches my gateway. The SuperLink
-                      service may restart briefly.</span
-                    ></label
-                  >
-                </div>
-              </li>
-              <li id="step-extract">
-                <h3>Extract</h3>
-                <div id="credentials" hidden>
-                  <div class="row">
-                    <label class="field"
-                      ><span>SSH user</span><input id="source-user" value="root" autocomplete="off"
-                    /></label>
-                  </div>
-                  <label class="field"
-                    ><span>SSH password</span
-                    ><input id="source-password" type="password" autocomplete="off"
-                  /></label>
-                  <button id="extract" class="filled" disabled>Extract keys</button>
-                  <button id="recover" class="danger" hidden>Restore gateway</button>
-                </div>
-                <div id="job" class="callout" role="status" hidden></div>
-                <button id="review-job" class="filled" hidden>Review keys</button>
-              </li>
-            </ol>
-            <p class="secondary">
-              ARMv7 SuperLink gateway with root SSH. Keep it connected to UniFi
-              during capture.
-            </p>
-            <details>
-              <summary>Import a JSON key bundle instead</summary>
-              <label class="field"
-                ><span>File</span><input id="import-file" type="file" accept=".json,application/json"
-              /></label>
-              <label class="field"
-                ><span>JSON</span
-                ><textarea id="import-json" rows="6" spellcheck="false" placeholder='{"version": 1, "devices": […]}'></textarea>
-              </label>
-              <button id="review-json">Review</button>
-            </details>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">Review &amp; import</div>
-          <ul class="list" id="preview"></ul>
-          <div class="card-content">
-            <label class="check"
-              ><input id="confirm-import" type="checkbox" /><span
-                >The previous gateway no longer manages these sensors.</span
-              ></label
-            >
-            <p class="secondary">Extracted keys stay on the server for 10 minutes.</p>
-          </div>
-          <div class="card-actions">
-            <button id="apply-import" class="filled" disabled>Import</button>
-          </div>
+          <h2>Add your first sensor</h2>
+          <p>We’ll check your connections and walk you through pairing.</p>
+          <button class="filled" id="setup-open">Get started</button>
         </div>
       </section>
 
@@ -153,7 +75,25 @@
           <button id="diagnostics">Download diagnostics</button>
         </div>
       </section>
+
     </main>
+
+    <dialog id="setup-dialog" aria-labelledby="setup-title" aria-describedby="setup-description">
+      <div class="setup-top"><span id="setup-counter" class="eyebrow">GET CONNECTED</span><button class="icon-button" id="setup-close" aria-label="Close setup">×</button></div>
+      <ol class="setup-progress" aria-label="Setup progress">
+        <li>Radio</li><li>MQTT</li><li>Pair</li><li>Check</li>
+      </ol>
+      <div class="setup-body">
+        <div id="setup-art" class="setup-art"></div>
+        <h2 id="setup-title" tabindex="-1"></h2>
+        <p id="setup-description"></p>
+        <div id="setup-status" class="setup-status" role="status"></div>
+        <div id="setup-devices" class="setup-devices"></div>
+        <p id="setup-error" class="setup-error" role="alert" hidden></p>
+        <details id="setup-help"><summary id="setup-help-title">Connection help</summary><div id="setup-help-body"></div></details>
+      </div>
+      <div class="setup-actions"><button id="setup-back">Back</button><span class="grow"></span><button class="filled" id="setup-next">Continue</button></div>
+    </dialog>
 
     <dialog id="dialog">
       <div class="dialog-head">
