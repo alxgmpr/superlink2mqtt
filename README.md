@@ -4,12 +4,22 @@
 directly, publish their state, and get Home Assistant entities via MQTT
 discovery, with no UniFi controller anywhere in the loop.
 
-It runs on a Raspberry Pi with an SX1302 concentrator: the bridge pairs with a
+It runs on Home Assistant with a Raspberry Pi as an SSH-connected SX1302 radio,
+or entirely on a Pi. The bridge pairs with a
 factory-default sensor over the air, decodes its application-layer reports, and
 maps them to HA entities (door/motion/leak/tamper, battery, signal, button
 presses) plus command buttons (locate, reboot, refresh, clear tamper). See
 **[docs/OPEN_GATEWAY_PLAN.md](docs/OPEN_GATEWAY_PLAN.md)** for current state and
 open work.
+
+The bridge includes a local **management UI with fresh-key sensor pairing**.
+Install with `python -m pip install .`, then run `superlink-bridged --demo` to
+preview it without hardware. See [management setup](docs/MANAGEMENT_UI.md)
+for installation, pairing and current limitations. A Ubiquiti gateway radio
+backend is not yet included.
+
+For the Home Assistant container and Pi radio split, see
+[Home Assistant setup](homeassistant/superlink2mqtt/DOCS.md).
 
 The protocol underneath is Ubiquiti's proprietary SuperLink — a LoRa-based
 sub-GHz radio system on 915 MHz (US ISM band), reverse engineered from firmware
@@ -79,7 +89,6 @@ may require re-pairing. Never post either file in an issue.
 
 SuperLink is Ubiquiti's proprietary long-range wireless protocol used in UniFi Access, UniFi Connect, UniFi SmartPower, and gateway products. It uses standard Semtech LoRa chirp spread spectrum modulation but a completely proprietary MAC layer with custom framing, encryption, and device management. It is not LoRaWAN.
 
-
 ## Hardware
 
 - Hub side: Semtech SX1302 digital baseband (8 simultaneous RX channels)
@@ -91,7 +100,7 @@ SuperLink is Ubiquiti's proprietary long-range wireless protocol used in UniFi A
 All confirmed over-the-air:
 
 | Parameter | Value |
-|-----------|-------|
+| ----------- | ------- |
 | Spreading Factor | SF5 |
 | Bandwidth (UL) | 125 kHz |
 | Bandwidth (DL) | 500 kHz |
@@ -107,7 +116,7 @@ Beacon channel: 927.6 MHz
 
 ## Frame Format
 
-```
+```text
 Offset  Size  Field
 ------  ----  -----
 0       10    Cleartext header (always unencrypted)
@@ -116,7 +125,8 @@ Offset  Size  Field
 ```
 
 Cleartext header (10 bytes):
-```
+
+```text
 Offset  Size  Field
 ------  ----  -----
 0       1     Mctrl (management/message control)
@@ -127,6 +137,7 @@ Offset  Size  Field
 ```
 
 Observed frame types by Dctrl:
+
 - 0x54: standard UL data (19 bytes total: 10 header + 4 MIC + 5 payload)
 - 0x44: variant UL data (20 bytes total: 10 header + 4 MIC + 6 payload)
 - 0x63: standard DL response (16 bytes total: 10 header + 4 MIC + 2 payload)
@@ -140,7 +151,7 @@ Once the LoRa frame is decrypted, the payload is an application message:
 from UniFi Protect's `messages.ts` (webpack module 41118), is:
 
 | ID | Hex | Name | Direction |
-|----|------|------|-----------|
+| ---- | ------ | ------ | ----------- |
 | 1 | `0x01` | REQUEST_STATUS_RESPONSE | device → gateway |
 | 2 | `0x02` | ADOPT_REQUEST | gateway → device |
 | 3 | `0x03` | ADOPT_RESPONSE | device → gateway |
@@ -170,7 +181,8 @@ The end-to-end adoption/commit mechanism is documented in
 ## Decrypted Payload (USL-Entry door sensor)
 
 Standard 5-byte UL payload:
-```
+
+```text
 Byte 0: 0x0C  type (sensor report)
 Byte 1: 0x00  flags
 Byte 2: 0x0F  command (door state)
@@ -211,7 +223,7 @@ sweep harnesses for tuning DL responses.
 
 ## Repository Structure
 
-```
+```text
 superlink2mqtt/
 ├── docs/protocol/          — frame format, crypto, channel plan, OTA captures
 ├── docs/teardowns/         — hardware component identification

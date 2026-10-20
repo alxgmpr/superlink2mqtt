@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SuperLink · superlink2mqtt</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="request.js" defer></script>
+    <script src="onboarding.js" defer></script>
+    <script src="settings.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="appbar">
+      <div class="appbar-row">
+        <h1>SuperLink</h1>
+        <span class="chip" id="mqtt-chip" hidden
+          ><span class="dot"></span><span>MQTT</span></span
+        >
+        <span class="chip" id="demo-chip" hidden>Demo · read-only</span>
+        <button id="lock" class="icon-button" title="Lock" aria-label="Lock" hidden>
+          ⏻
+        </button>
+      </div>
+      <nav class="tabs" role="tablist" id="tabs" hidden>
+        <button class="tab" role="tab" data-tab="devices">Devices</button>
+        <button class="tab" role="tab" data-tab="activity">Activity</button>
+        <button class="tab" role="tab" data-tab="gateway">Gateway</button>
+      </nav>
+    </header>
+
+    <main>
+      <div id="health" class="callout error" role="status" hidden></div>
+      <section id="session-status" class="card card-content" role="status">
+        <p id="session-message">Checking access… Home Assistant handles sign-in when opened from its sidebar.</p>
+        <button id="retry-session">Retry connection</button>
+      </section>
+      <section id="login" class="card login" hidden>
+        <form id="login-form">
+          <div class="card-header">Unlock</div>
+          <div class="card-content">
+            <p>This is the standalone bridge login. Use its SUPERLINK_WEB_TOKEN, not a Home Assistant access token. In Home Assistant, open the app from the sidebar to sign in automatically.</p>
+            <label class="field"
+              ><span>Access token (SUPERLINK_WEB_TOKEN)</span
+              ><input id="token" type="password" autocomplete="off" required
+            /></label>
+          </div>
+          <div class="card-actions">
+            <button class="filled" type="submit">Unlock</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="tab-devices" hidden>
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Search devices" aria-label="Search devices" />
+          <span class="secondary" id="device-count"></span>
+        </div>
+        <div class="grid" id="devices"></div>
+        <p id="search-empty" class="empty" hidden>No matching devices. Clear or change your search.</p>
+        <div class="card empty" id="devices-empty" hidden>
+          <h2>Add your first sensor</h2>
+          <p>We’ll check your connections and walk you through pairing.</p>
+          <button class="filled" id="setup-open">Get started</button>
+        </div>
+      </section>
+
+      <section id="tab-activity" class="card" hidden>
+        <ul class="list" id="activity"></ul>
+      </section>
+
+      <section id="tab-gateway" class="card" hidden>
+        <ul class="list" id="gateway"></ul>
+        <div id="gateway-settings" class="card-content" hidden>
+          <details><summary>Radio settings</summary><div id="radio-settings"></div></details>
+          <details><summary>MQTT settings</summary><div id="mqtt-settings"></div></details>
+        </div>
+        <p id="settings-load-error" class="card-content setup-error" hidden></p>
+        <button id="settings-retry" hidden>Reload settings</button>
+        <div class="card-actions">
+          <span class="secondary grow" id="settings-fallback">Edit the YAML and restart to change settings.</span>
+          <button id="diagnostics">Download diagnostics</button>
+        </div>
+      </section>
+
+    </main>
+
+    <dialog id="setup-dialog" aria-labelledby="setup-title" aria-describedby="setup-description">
+      <div class="setup-top"><span id="setup-counter" class="eyebrow">GET CONNECTED</span><button class="icon-button" id="setup-close" aria-label="Close setup">×</button></div>
+      <ol class="setup-progress" aria-label="Setup progress">
+        <li>Radio</li><li>MQTT</li><li>Pair</li><li>Check</li>
+      </ol>
+      <div class="setup-body">
+        <div id="setup-art" class="setup-art"></div>
+        <h2 id="setup-title" tabindex="-1"></h2>
+        <p id="setup-description"></p>
+        <div id="setup-status" class="setup-status" role="status"></div>
+        <div id="setup-settings"></div>
+        <div id="setup-devices" class="setup-devices"></div>
+        <p id="setup-error" class="setup-error" role="alert" hidden></p>
+        <details id="setup-help"><summary id="setup-help-title">Connection help</summary><div id="setup-help-body"></div></details>
+      </div>
+      <div class="setup-actions"><button id="setup-back">Back</button><span class="grow"></span><button class="filled" id="setup-next">Continue</button></div>
+    </dialog>
+
+    <dialog id="dialog">
+      <div class="dialog-head">
+        <span class="icon" id="d-icon"></span>
+        <div>
+          <h2 id="d-name"></h2>
+          <div class="secondary" id="d-sub"></div>
+        </div>
+        <button class="icon-button" id="d-close" aria-label="Close">×</button>
+      </div>
+      <ul class="list" id="d-readings"></ul>
+      <div class="card-actions" id="d-actions"></div>
+    </dialog>
+
+    <div id="toast" role="status" hidden></div>
+  </body>
+</html>

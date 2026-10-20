@@ -2,8 +2,13 @@
 from __future__ import annotations
 import csv
 import logging
+import os
+import sys
 import queue
+import signal
+import threading
 import time
+from concurrent.futures import Future
 from typing import Callable
 
 from ..hal import BW_500KHZ
@@ -32,6 +37,15 @@ class BridgeRuntime:
         self._csv_writer = None
         self._csv_file = None
         self._action_queue: queue.Queue = queue.Queue()
+        self._management_queue: queue.Queue = queue.Queue(maxsize=32)
+        self.mqtt_bridge = None
+        self.demo = False
+        self.radio_state = "starting"
+        self.radio_error = None
+        self._radio_retry_at = 0.0
+        self._radio_retry_delay = 1.0
+        self._radio_start = None
+        self._radio_reset_needed = True
         self._tick_interval = 1.0
         self._last_tick = 0.0
         self.core = BridgeCore(self.store, self.profiles, self._session_factory,
@@ -127,7 +141,29 @@ class BridgeRuntime:
 
     def submit_action(self, action) -> None:
         """Thread-safe: enqueue an action to be applied on the poll-loop thread."""
+        if self.config.radio and self.radio_state != "connected":
+            log.warning("Command rejected: radio unavailable")
+            return
         self._action_queue.put(action)
+
+    def submit_management(self, operation) -> Future:
+        future = Future()
+        self._management_queue.put_nowait((future, operation))
+        return future
+
+    def _drain_management(self) -> None:
+        # Bound work per iteration so a busy UI cannot starve radio polling.
+        for _ in range(4):
+            try:
+                future, operation = self._management_queue.get_nowait()
+            except queue.Empty:
+                break
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                future.set_result(operation())
+            except Exception as exc:
+                future.set_exception(exc)
 
     def default_mac(self) -> bytes | None:
         """The MAC a control command targets when none is given.
@@ -157,6 +193,7 @@ class BridgeRuntime:
                             action.mac.hex(), exc)
 
     def poll_once(self, now: float) -> None:
+        self._drain_management()
         self._drain_actions()
         for pkt in self.hal.receive():
             if not pkt.crc_ok:
@@ -185,22 +222,96 @@ class BridgeRuntime:
     def stop(self) -> None:
         self._stop = True
 
+    def _radio_failed(self, now, error):
+        self.hal.stop()
+        self.radio_state = "disconnected"
+        # Exception text can contain paths or credentials supplied by a peer.
+        self.radio_error = f"Radio unavailable ({type(error).__name__}). Check Pi power, network, SSH host key and radio service."
+        log.warning("%s Retrying in %.0fs", self.radio_error, self._radio_retry_delay)
+        self._radio_retry_at = now + self._radio_retry_delay
+        self._radio_retry_delay = min(30.0, self._radio_retry_delay * 2)
+        if not self._radio_reset_needed:
+            return
+        self._radio_reset_needed = False
+        # Persist reconnect keys, but discard volatile sessions and commands:
+        # an interrupted transmission may already have reached the sensor.
+        for mac, session in self._sessions.items():
+            record = session.to_record()
+            if record.adopted:
+                self.store.save(record)
+            self._on_event(DeviceStateEvent(mac, "lost"))
+        self._sessions.clear()
+        self.core = BridgeCore(self.store, self.profiles, self._session_factory,
+                               auto_adopt=False)
+        self.core.subscribe(self._on_event)
+        while True:
+            try:
+                self._action_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def _connect_radio(self, now):
+        """Keep management responsive while SSH connect/auth/initialization waits."""
+        if self._radio_start is None:
+            if now < self._radio_retry_at:
+                return
+            self.radio_state = "connecting"
+            future = self._radio_start = Future()
+
+            def connect():
+                try:
+                    self.hal.start()
+                except Exception as exc:
+                    future.set_exception(exc)
+                else:
+                    future.set_result(None)
+                finally:
+                    if self._stop:
+                        self.hal.stop()
+
+            threading.Thread(target=connect, daemon=True, name="radio-connect").start()
+        if not self._radio_start.done():
+            return
+        future, self._radio_start = self._radio_start, None
+        try:
+            future.result()
+        except Exception as exc:
+            self._radio_failed(now, exc)
+        else:
+            self.radio_state, self.radio_error = "connected", None
+            self._radio_reset_needed = True
+            self._radio_retry_delay = 1.0
+            log.info("Radio connected (HAL %s)", self.hal.version())
+
     def run(self) -> None:
         if self.config.csv_path:
             self._csv_file = open(self.config.csv_path, "a", newline="")
             self._csv_writer = csv.writer(self._csv_file)
-        self.hal.start()
-        log.info("bridge runtime started (HAL %s)", self.hal.version())
         try:
+            if not self.config.radio:
+                self.hal.start()
+                self.radio_state = "connected"
             while not self._stop:
                 now = time.monotonic()
-                self.poll_once(now)
-                self.tick_if_due(now)
+                if self.config.radio and self.radio_state != "connected":
+                    self._drain_management()
+                    self._connect_radio(now)
+                else:
+                    try:
+                        self.poll_once(now)
+                        self.tick_if_due(now)
+                    except ConnectionError as exc:
+                        if not self.config.radio:
+                            raise
+                        self._radio_failed(time.monotonic(), exc)
                 time.sleep(0.01)
         except KeyboardInterrupt:
             log.info("shutting down")
         finally:
-            self.hal.stop()
+            self._stop = True
+            # A connecting worker owns the HAL until it exits and cleans up.
+            if self._radio_start is None or self._radio_start.done():
+                self.hal.stop()
             for mac, session in self._sessions.items():
                 try:
                     self.store.save(session.to_record())
@@ -248,16 +359,49 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="SuperLink bridge runtime daemon")
     parser.add_argument("--config", default="superlink_bridge.yaml",
                         help="path to YAML config")
+    parser.add_argument("--demo", action="store_true", help="local UI demo; no radio or MQTT")
     args = parser.parse_args(argv)
+    if args.demo:
+        from .web import run_demo
+        run_demo()
+        return
     config = RuntimeConfig.load(args.config)
     logging.basicConfig(level=getattr(logging, config.log_level, logging.INFO))
-    runtime = build_runtime(config, SX1302())
-    control = start_control_socket_if_configured(runtime, config)
-    mqtt_bridge = start_mqtt_if_configured(runtime, config)
+    if config.radio is not None:
+        from ..radio_remote import RemoteSX1302
+        hal = RemoteSX1302(config.radio)
+    else:
+        hal = SX1302(lib_path=config.hal_library, spi_path=config.spi_path.encode(),
+                     reset_script=config.reset_script)
+    runtime = build_runtime(config, hal)
+    settings = None
+    if os.environ.get("SUPERLINK_HA_ROOT"):
+        from .ha_settings import HASettings
+        settings = HASettings(os.environ["SUPERLINK_HA_ROOT"], os.environ["SUPERLINK_HA_OPTIONS"],
+                              on_change=runtime.stop)
+        if os.environ.get("SUPERLINK_HA_REVISION", settings.revision()) != settings.revision():
+            # A final setup request may have completed while bootstrap closed.
+            os.execv(sys.executable, [sys.executable, os.environ["SUPERLINK_HA_LAUNCHER"]])
+            return
+    previous_sigterm = signal.signal(signal.SIGTERM, lambda *_: runtime.stop())
+    control = mqtt_bridge = web = None
     try:
+        control = start_control_socket_if_configured(runtime, config)
+        mqtt_bridge = start_mqtt_if_configured(runtime, config)
+        runtime.mqtt_bridge = mqtt_bridge
+        if config.web is not None:
+            from .web import ManagementServer
+            web = ManagementServer(runtime, config.web, settings=settings)
+            web.start()
         runtime.run()
     finally:
+        if web is not None:
+            web.stop()
         if mqtt_bridge is not None:
             mqtt_bridge.stop()
         if control is not None:
             control.stop()
+        signal.signal(signal.SIGTERM, previous_sigterm)
+
+    if settings is not None and settings.restart_requested:
+        os.execv(sys.executable, [sys.executable, os.environ["SUPERLINK_HA_LAUNCHER"]])

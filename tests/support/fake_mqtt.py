@@ -25,12 +25,16 @@ class FakeMqttClient:
 
     def tls_set(self):
         self.tls_enabled = True
+        self.tls = True
 
     def reconnect_delay_set(self, min_delay, max_delay):
         self.reconnect_delays = (min_delay, max_delay)
 
     def connect_async(self, host, port=1883, keepalive=60):
         self.async_connect_called = True
+
+    def is_connected(self):
+        return self.connected
 
     def fire_on_connect(self):
         """Simulate a (re)connect: invoke on_connect with the paho v2 signature."""

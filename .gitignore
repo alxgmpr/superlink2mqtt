@@ -30,6 +30,9 @@ verification/lean/.lake/
 __pycache__/
 *.pyc
 .venv/
+*.egg-info/
+superlink_devices.json*
+.env
 venv/
 
 # OS

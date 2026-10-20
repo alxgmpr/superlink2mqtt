@@ -4,6 +4,7 @@ import abc
 import json
 import os
 import tempfile
+import uuid
 import threading
 from pathlib import Path
 from dataclasses import dataclass, asdict, fields
@@ -26,6 +27,8 @@ class DeviceRecord:
     # bridge restart keeps decoding PROPERTY_REPORTs into typed events without
     # having to re-request device info on the next reconnect.
     prop_sizes: dict | None = None
+    name: str | None = None
+    network_id: int | None = None
 
 
 _BYTES_FIELDS = ("mac", "primary_key", "fallback_key", "kdf_context", "transport_key")
@@ -59,6 +62,10 @@ class DeviceStore(abc.ABC):
     @abc.abstractmethod
     def delete(self, mac: bytes) -> None: ...
 
+    def import_records(self, records: list[DeviceRecord]) -> None:
+        """Atomically insert new devices, refusing existing identities."""
+        raise NotImplementedError("This device store does not support imports")
+
 
 class InMemoryDeviceStore(DeviceStore):
     def __init__(self):
@@ -72,6 +79,16 @@ class InMemoryDeviceStore(DeviceStore):
 
     def delete(self, mac: bytes) -> None:
         self._records.pop(mac, None)
+
+    def import_records(self, records: list[DeviceRecord]) -> None:
+        _check_new(records, self._records)
+        self._records.update({r.mac: r for r in records})
+
+
+def _check_new(records, existing):
+    macs = [r.mac for r in records]
+    if len(macs) != len(set(macs)) or any(mac in existing for mac in macs):
+        raise ValueError("Import contains duplicate or existing devices")
 
 
 class StoreError(ValueError):
@@ -162,4 +179,15 @@ class JsonDeviceStore(DeviceStore):
             previous = self._read()
             data = dict(previous)
             data.pop(mac.hex(), None)
+            self._write(data, previous)
+
+    def import_records(self, records: list[DeviceRecord]) -> None:
+        with self._lock:
+            previous = self._read()
+            _check_new(records, {bytes.fromhex(mac) for mac in previous})
+            data = dict(previous)
+            data.update({r.mac.hex(): _to_json(r) for r in records})
+            _validate_records(data)
+            if os.path.exists(self.path):
+                self._atomic_write(f"{self.path}.backup-{uuid.uuid4().hex}", previous)
             self._write(data, previous)

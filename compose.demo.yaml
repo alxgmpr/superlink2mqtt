@@ -1,0 +1,9 @@
+services:
+  superlink:
+    build: .
+    command: ["--demo"]
+    ports:
+      - "127.0.0.1:8099:8099"
+    environment:
+      SUPERLINK_DEMO_HOST: "0.0.0.0"
+      SUPERLINK_WEB_TOKEN: "${SUPERLINK_WEB_TOKEN:?Set a random token of at least 32 characters}"
