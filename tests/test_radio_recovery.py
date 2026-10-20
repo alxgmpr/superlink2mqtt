@@ -135,6 +135,7 @@ def test_mqtt_start_uses_async_connect_and_honors_tls():
             self.pending = args
     rt = runtime()
     client = OfflineBroker()
+    client.auto_connect = False
     bridge = MqttBridge(MqttConfig('offline.invalid', tls=True), rt, client)
     bridge.start()
     assert client.loop_running and client.tls

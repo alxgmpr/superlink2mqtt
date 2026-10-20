@@ -48,6 +48,7 @@ control_socket: "/tmp/superlink_bridge.sock"
 # mqtt:
 #   host: "192.168.1.10"       # MQTT broker (required to enable)
 #   port: 1883
+#   tls: false                 # true: verify broker cert; use TLS port (usually 8883)
 #   username: null
 #   password: null
 #   base_topic: "superlink"    # state/command topic root

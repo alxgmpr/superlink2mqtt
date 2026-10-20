@@ -13,7 +13,7 @@ from typing import Callable
 
 from ..hal import BW_500KHZ
 from .config import RuntimeConfig
-from .core import BridgeCore, OutgoingFrame
+from .core import BridgeCore, OutgoingFrame, InvalidCommand
 from .events import (
     Event, DeviceDiscovered, DeviceStateEvent, PropertyEvent, DeviceInfoEvent,
     AdoptDevice, SetPropertyRaw, DeviceRemoved,
@@ -188,8 +188,9 @@ class BridgeRuntime:
                 break
             try:
                 self.core.submit(action)
-            except (ValueError, TypeError, KeyError, OverflowError):
-                log.warning("Invalid device command rejected")
+            except InvalidCommand as exc:
+                log.warning("rejected %s for %s: %s", type(action).__name__,
+                            action.mac.hex(), exc)
 
     def poll_once(self, now: float) -> None:
         self._drain_management()
