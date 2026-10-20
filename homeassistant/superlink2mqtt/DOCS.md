@@ -14,8 +14,8 @@ SuperLink sensors ↔ Pi / SX1302 ↔ superlink2mqtt → MQTT broker → Home As
 
 - A Pi with a working SX1302 CoreCell, the Semtech HAL, and reliable LAN access
   from Home Assistant. An SX1262 sniffer is not a substitute for this backend.
-- A Supervisor MQTT service (for example, the Mosquitto broker app), configured
-  and running. The bridge obtains its service credentials automatically.
+- An MQTT broker. Choose the Home Assistant broker to obtain Supervisor service
+  credentials automatically, or enter a custom broker in the setup form.
 - Home Assistant's MQTT integration connected to that same broker. Installing a
   broker or this app alone does not configure Home Assistant's MQTT integration.
 - For an existing superlink2mqtt installation, preserve its gateway identity,
@@ -30,9 +30,11 @@ SuperLink sensors ↔ Pi / SX1302 ↔ superlink2mqtt → MQTT broker → Home As
 2. On the Pi, install the `superlink` package or the radio-only files
    `superlink/__init__.py`, `hal.py`, and `radio_server.py` on Python's module
    path. Keep the working HAL at `~/sx1302_hal`, including its reset script.
-3. Create a dedicated SSH key for the app. Pin the Pi's SSH host key in
-   `known_hosts`, verifying it through an existing trusted connection. Do not
-   disable host-key checking. The Pi account needs access to its radio hardware.
+3. Start the app and enter the Pi address, account, port and host public key in
+   the Radio form. Get the host key from the Pi console or a trusted connection
+   with `cat /etc/ssh/ssh_host_ed25519_key.pub`. Saving generates a dedicated
+   app key only if one does not already exist. Expand **Authorize this app on
+   your Pi** to copy its public key. The private key stays inside the app.
 4. Restrict that key in the Pi account's `authorized_keys` to a fixed wrapper:
 
    ```text
@@ -46,7 +48,22 @@ SuperLink sensors ↔ Pi / SX1302 ↔ superlink2mqtt → MQTT broker → Home As
 5. Allow Home Assistant to reach this Pi on its configured SSH port. Stop any
    previous sniffer/gateway process using the SX1302; only one process may own it.
 
-## Configure persistent storage
+## Configure in the app
+
+The walkthrough embeds the same Radio and MQTT forms available in **Gateway**.
+Save each step to apply it; the bridge reconnects automatically. Custom MQTT
+fields include the address, account, port and TLS. Advanced settings contain the
+sensor topic and discovery prefix. Blank passwords preserve a saved password;
+a different broker or account requires a new password or **Clear saved password**.
+
+Settings are saved privately in `settings.json` with an atomic replacement and
+a previous-version backup. UI radio settings take precedence over the legacy HA
+app options. New installations get a stable random gateway identity on their
+first radio save. Existing gateway identities, sensor stores, SSH private keys
+and operator-provided files are preserved. The app still requires installation
+of the radio service and authorization of its public key on the Pi.
+
+## Existing installations and manual provisioning
 
 Place these files in `/addon_configs/local_superlink2mqtt/` on Home Assistant
 (the app sees that directory as `/config`):
@@ -82,10 +99,10 @@ tab. Start the app, then enable **Start on boot** and **Watchdog**. Updates use
 the same staging procedure followed by **Rebuild**. Keep all private files out
 of the build directory and Git. Back up the app configuration before updates.
 
-If radio files or MQTT service details are missing, the app opens its setup UI
-and checks again every five seconds. It does not generate a replacement gateway
-identity or change saved sensor keys. Provision the listed files and app options;
-the bridge starts when configuration is ready. Invalid stores require recovery.
+If radio files or MQTT service details are missing, the app opens its setup form
+and checks again every five seconds. Reading settings never generates keys;
+saving the radio form provisions a new installation. Invalid stores or damaged
+gateway configuration require recovery and are never replaced by a form save.
 A configured but unreachable radio retries without closing the UI.
 
 ## Open the UI and check readiness
@@ -99,7 +116,8 @@ In **Gateway**, check **Radio connection: connected** and **MQTT: connected**.
 These are independent checks. MQTT connectivity alone does not prove the Pi or
 sensor link works. With no paired sensors, a four-step modal opens automatically:
 radio, MQTT, pairing and a first reading. Each step shows a diagram and live
-status. Pair a discovered sensor inside the modal; completion requires persisted
+status and editable connection fields. Saving waits for the new configuration
+to take effect before allowing the next step. Pair a discovered sensor inside the modal; completion requires persisted
 adoption and a decoded reading. Close it at any time and use **Get started** in
 the empty Devices view to resume. Saved sensors suppress automatic onboarding.
 

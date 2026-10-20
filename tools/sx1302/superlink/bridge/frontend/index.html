@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="style.css" />
     <script src="request.js" defer></script>
     <script src="onboarding.js" defer></script>
+    <script src="settings.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -70,8 +71,14 @@
 
       <section id="tab-gateway" class="card" hidden>
         <ul class="list" id="gateway"></ul>
+        <div id="gateway-settings" class="card-content" hidden>
+          <details><summary>Radio settings</summary><div id="radio-settings"></div></details>
+          <details><summary>MQTT settings</summary><div id="mqtt-settings"></div></details>
+        </div>
+        <p id="settings-load-error" class="card-content setup-error" hidden></p>
+        <button id="settings-retry" hidden>Reload settings</button>
         <div class="card-actions">
-          <span class="secondary grow">Edit the YAML and restart to change settings.</span>
+          <span class="secondary grow" id="settings-fallback">Edit the YAML and restart to change settings.</span>
           <button id="diagnostics">Download diagnostics</button>
         </div>
       </section>
@@ -88,6 +95,7 @@
         <h2 id="setup-title" tabindex="-1"></h2>
         <p id="setup-description"></p>
         <div id="setup-status" class="setup-status" role="status"></div>
+        <div id="setup-settings"></div>
         <div id="setup-devices" class="setup-devices"></div>
         <p id="setup-error" class="setup-error" role="alert" hidden></p>
         <details id="setup-help"><summary id="setup-help-title">Connection help</summary><div id="setup-help-body"></div></details>

@@ -25,10 +25,12 @@ def is_ingress(config, peer):
 
 
 class ManagementServer:
-    def __init__(self, runtime, config, *, management=None):
+    def __init__(self, runtime, config, *, management=None, settings=None):
         self.management = management if management is not None else Management(runtime)
         self.runtime = runtime
         self.config = config
+        self.settings = settings
+        self.settings_revision = settings.revision() if settings is not None else None
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -99,19 +101,29 @@ class ManagementServer:
                     return
                 path = urlsplit(self.path).path
                 if path == "/api/session":
-                    self.reply(200, {"ingress": is_ingress(owner.config, self.client_address[0])})
+                    self.reply(200, {"ingress": is_ingress(owner.config, self.client_address[0]), "settings": owner.settings is not None})
                     return
                 if path == "/favicon.ico":
                     self.reply(204, b"", "image/x-icon")
                     return
+                if path == "/api/settings" and owner.settings is not None:
+                    if self.authorized():
+                        self.execute(owner.settings.snapshot)
+                    return
                 if path == "/api/state":
                     if self.authorized():
-                        self.execute(owner.management.snapshot)
+                        def snapshot():
+                            result = dict(owner.management.snapshot())
+                            if owner.settings is not None:
+                                result.setdefault("settings_revision", owner.settings_revision)
+                            return result
+                        self.execute(snapshot)
                     return
                 assets = {"/": ("index.html", "text/html; charset=utf-8"),
                           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                           "/request.js": ("request.js", "text/javascript; charset=utf-8"),
                           "/onboarding.js": ("onboarding.js", "text/javascript; charset=utf-8"),
+                          "/settings.js": ("settings.js", "text/javascript; charset=utf-8"),
                           "/style.css": ("style.css", "text/css; charset=utf-8")}
                 if path not in assets:
                     self.reply(404, {"error": "Not found"})
@@ -140,7 +152,9 @@ class ManagementServer:
                     self.reply(400, {"error": "Expected a JSON object"})
                     return
                 path = urlsplit(self.path).path
-                if path.startswith("/api/devices/") and path.endswith("/command"):
+                if path == "/api/settings" and owner.settings is not None:
+                    self.execute(lambda: owner.settings.save(body))
+                elif path.startswith("/api/devices/") and path.endswith("/command"):
                     parts = path.split("/")
                     if len(parts) != 5:
                         self.reply(404, {"error": "Not found"})

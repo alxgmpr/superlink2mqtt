@@ -100,7 +100,7 @@ def test_startup_waits_then_closes_setup_server_before_launch(tmp_path, monkeypa
         def is_set(self): return False
         def wait(self, delay): calls.append(('wait',delay))
     class Server:
-        def __init__(self, runtime, web, *, management):
+        def __init__(self, runtime, web, *, management, settings):
             assert web.ingress and management.snapshot()['setup']['missing'] == ['mqtt']
         def start(self): calls.append('start')
         def stop(self): calls.append('stop')
@@ -110,6 +110,8 @@ def test_startup_waits_then_closes_setup_server_before_launch(tmp_path, monkeypa
     monkeypatch.setenv('SUPERLINK_WEB_TOKEN', TOKEN)
     monkeypatch.setattr(startup.os, 'execvp', lambda *args: calls.append(('exec',args)))
     runtime_path = tmp_path/'runtime.yaml'
+    for key in ("SUPERLINK_HA_ROOT", "SUPERLINK_HA_OPTIONS", "SUPERLINK_HA_LAUNCHER", "SUPERLINK_HA_REVISION"):
+        monkeypatch.setenv(key, "test")
     startup.main(tmp_path, options, runtime_path)
     assert calls[:3] == ['start',('wait',5),'stop']
     assert calls[3][0] == 'exec'

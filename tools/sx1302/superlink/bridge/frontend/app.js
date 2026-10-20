@@ -20,6 +20,7 @@ const ICONS = {
 
 let token = "",
   ingressSession = false,
+  settingsEnabled = false,
   sessionVersion = 0,
   state = null,
   timer = null,
@@ -125,6 +126,11 @@ function lock() {
   $("dialog").close();
   $("setup-dialog").close();
   setupFlow = new SetupFlow();
+  settingsForms = {};
+  settingsApplyingRevision = null;
+  $("setup-settings").replaceChildren();
+  $("radio-settings").replaceChildren();
+  $("mqtt-settings").replaceChildren();
 }
 $("lock").addEventListener("click", lock);
 
@@ -136,6 +142,7 @@ async function unlock(ingress = false) {
     const snapshot = await api("state");
     if (version !== sessionVersion) return;
     state = snapshot;
+    if (settingsEnabled) await loadSettings();
     toast("");
     $("token").value = "";
     $("login").hidden = true;
@@ -163,6 +170,7 @@ async function bootstrap() {
   try {
     const session = await requestJSON("api/session");
     ingressSession = session.ingress === true;
+    settingsEnabled = session.settings === true;
     if (ingressSession) await unlock(true);
     else {
       $("session-status").hidden = true;
@@ -189,6 +197,7 @@ async function refresh() {
     const snapshot = await api("state");
     if (token !== requestToken || version !== sessionVersion) return;
     state = snapshot;
+    if (settingsApplyingRevision === state.settings_revision) settingsApplyingRevision = null;
     if ($("setup-error").textContent.startsWith("Connection interrupted.")) $("setup-error").hidden = true;
     render();
   } catch (error) {
@@ -223,6 +232,7 @@ function render() {
   renderActivity();
   renderGateway();
   renderSetup();
+  mountSettings();
   if (selectedMac && $("dialog").open) fillDialog();
 }
 
@@ -395,20 +405,22 @@ function changeSetup(index) {
   $("setup-help").open = false;
   renderSetup();
   $("setup-title").focus();
+  mountSettings();
 }
 function dismissSetup() {
   setupFlow.dismiss();
   $("setup-dialog").close();
+  mountSettings();
 }
 $("setup-close").addEventListener("click", dismissSetup);
-$("setup-dialog").addEventListener("cancel", () => setupFlow.dismiss());
+$("setup-dialog").addEventListener("cancel", () => { setupFlow.dismiss(); mountSettings(); });
 $("setup-open").addEventListener("click", () => {
   setupFlow.opened = true;
   renderSetup();
 });
 $("setup-back").addEventListener("click", () => changeSetup(setupFlow.index - 1));
 $("setup-next").addEventListener("click", () => {
-  if (!setupFlow.ready(state)) return;
+  if (!setupFlow.ready(state) || settingsApplyingRevision || currentSettingsForm()?.dirty || currentSettingsForm()?.busy) return;
   if (setupFlow.index === 3) {
     dismissSetup();
     tab("devices");
@@ -434,6 +446,7 @@ async function pairFromSetup(mac) {
 function renderSetup() {
   setupFlow.observe(state);
   if (!setupFlow.opened) return;
+  mountSettings();
   const dialog = $("setup-dialog");
   if (!dialog.open) {
     $("dialog").close();
@@ -445,8 +458,8 @@ function renderSetup() {
   const ready = setupFlow.ready(state);
   const title = ["Connect your radio", "Connect MQTT", "Pair your first sensor", ready ? "Your sensor is ready" : "Try your sensor"][index];
   const description = [
-    "Power your Pi + SX1302 and connect it to your home network.",
-    "MQTT carries sensor readings into Home Assistant.",
+    settingsEnabled ? "Enter your Pi’s address and verified host key." : "Power your Pi + SX1302 and connect it to your home network.",
+    settingsEnabled ? "Use Home Assistant’s broker or enter your own. Save to connect." : "MQTT carries sensor readings into Home Assistant.",
     "Put a new or factory-reset sensor in pairing mode, close to your radio.",
     ready ? "A reading arrived. You can now find this sensor in Devices." : "Open the door, trigger motion, or wake the sensor. We’ll wait for its first reading.",
   ][index];
@@ -466,7 +479,7 @@ function renderSetup() {
   });
   $("setup-back").hidden = index === 0;
   $("setup-next").hidden = index === 2;
-  $("setup-next").disabled = !ready;
+  $("setup-next").disabled = !ready || !!settingsApplyingRevision || !!currentSettingsForm()?.dirty || !!currentSettingsForm()?.busy;
   $("setup-next").textContent = index === 3 ? "View devices" : "Continue";
   const pending = state.setup?.missing || [];
   let message = index === 0 ? (ready ? (radioReady() ? "Radio connected" : "Radio configuration ready") : "Waiting for your radio") :
@@ -475,11 +488,12 @@ function renderSetup() {
     ready ? `${device.name} · ${format(device.properties[0])}` : "Waiting for a reading…";
   if (index === 3 && state.mqtt !== "connected") message = "MQTT disconnected. Reconnect your broker to finish.";
   if (index === 3 && !radioReady()) message = "Radio disconnected. Waiting for it to reconnect.";
-  if (index === 0 && pending.includes("radio_host")) message = "Add your Pi’s address in app Configuration";
-  else if (index === 0 && pending.some((name) => name !== "mqtt")) message = "Finish the radio connection below";
+  if (index === 0 && pending.includes("radio_host")) message = settingsEnabled ? "Enter your Pi’s connection details below" : "Add your Pi’s address in app Configuration";
+  else if (index === 0 && pending.some((name) => name !== "mqtt")) message = "Save your radio settings to connect";
   const status = $("setup-status");
   status.classList.toggle("ready", ready);
-  status.textContent = message;
+  status.textContent = settingsApplyingRevision ? "Applying saved settings…" : message;
+  if (settingsApplyingRevision) status.classList.remove("ready");
   const candidates = index === 2 ? state.devices.filter((d) => !d.adopted) : [];
   const signature = JSON.stringify([index, candidates.map((d) => [d.mac, d.name, d.has_session]), setupFlow.pendingMac, radioReady()]);
   if ($("setup-devices").dataset.signature !== signature) {
@@ -495,6 +509,7 @@ function renderSetup() {
       return row;
     }));
   }
+  $("setup-help").hidden = settingsEnabled && index < 2;
   const helpSignature = JSON.stringify([index, ingressSession, state.backend, pending]);
   if ($("setup-help-body").dataset.signature !== helpSignature) {
     $("setup-help-body").dataset.signature = helpSignature;
@@ -534,4 +549,46 @@ function renderSetup() {
     $("setup-title").focus();
   }
 }
+// ---- reusable connection forms ----------------------------------------------
+let settingsForms = {};
+let settingsApplyingRevision = null;
+const currentSettingsForm = () => settingsForms[["radio", "mqtt"][setupFlow.index]];
+function mountSettings() {
+  $("gateway-settings").hidden = !settingsEnabled;
+  $("settings-fallback").hidden = settingsEnabled;
+  const errorContainer = $(setupFlow.opened && setupFlow.index < 2 ? "setup-settings" : "gateway-settings");
+  for (const id of ["settings-load-error", "settings-retry"]) if ($(id).parentElement !== errorContainer) errorContainer.append($(id));
+  for (const [section, form] of Object.entries(settingsForms)) {
+    const inModal = setupFlow.opened && section === ["radio", "mqtt"][setupFlow.index];
+    form.mount($(inModal ? "setup-settings" : `${section}-settings`));
+  }
+}
+async function loadSettings() {
+  const version = sessionVersion;
+  try {
+    const data = await api("settings");
+    if (version !== sessionVersion) return;
+    for (const section of ["radio", "mqtt"]) {
+      if (settingsForms[section]) settingsForms[section].hydrate(data);
+      else settingsForms[section] = new SettingsForm(section, data, async (body) => {
+        const result = await api("settings", body);
+        if (version !== sessionVersion) throw new Error("Session expired. Reopen settings.");
+        if (result.changed) settingsApplyingRevision = result.revision;
+        for (const [other, form] of Object.entries(settingsForms)) if (other !== section) form.hydrate(result);
+        return result;
+      }, () => api("settings"), () => { if (state) renderSetup(); });
+    }
+    $("settings-load-error").hidden = $("settings-retry").hidden = true;
+    mountSettings();
+  } catch (error) {
+    $("settings-load-error").textContent = error.message;
+    $("settings-load-error").hidden = $("settings-retry").hidden = false;
+    if (setupFlow.opened) {
+      $("setup-error").textContent = error.message;
+      $("setup-error").hidden = false;
+    }
+  }
+}
+$("settings-retry").addEventListener("click", loadSettings);
+
 bootstrap();

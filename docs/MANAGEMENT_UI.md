@@ -164,3 +164,18 @@ extraction routes, HTTP authentication/origin checks and redaction.
 commit and restored reconnect. Historical extraction and import helpers remain
 research code and are not exposed by the management server. These offline tests
 do not establish physical sensor operation or Home Assistant deployment.
+
+## Embedded connection settings
+
+In the Home Assistant app, Radio and MQTT use one mountable `SettingsForm` in
+both the onboarding modal and Gateway. Field definitions and validation come
+from the same backend schema; switching views preserves the draft. Polling does
+not rebuild fields or replace typed values. Settings use authenticated Ingress
+and the existing bounded JSON API. Standalone installations keep YAML settings.
+
+`GET /api/settings` exposes field definitions, safe values, a revision and the
+app public key. It never returns private keys or saved passwords.
+`POST /api/settings` accepts `section`, `values` and `revision`; stale revisions
+are rejected. Saving applies settings through a clean bridge restart and waits
+for the applied revision. Settings persist in private `settings.json`, with
+existing identities and operator files left intact.

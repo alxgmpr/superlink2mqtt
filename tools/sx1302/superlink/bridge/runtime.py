@@ -2,6 +2,8 @@
 from __future__ import annotations
 import csv
 import logging
+import os
+import sys
 import queue
 import signal
 import threading
@@ -371,6 +373,15 @@ def main(argv=None):
         hal = SX1302(lib_path=config.hal_library, spi_path=config.spi_path.encode(),
                      reset_script=config.reset_script)
     runtime = build_runtime(config, hal)
+    settings = None
+    if os.environ.get("SUPERLINK_HA_ROOT"):
+        from .ha_settings import HASettings
+        settings = HASettings(os.environ["SUPERLINK_HA_ROOT"], os.environ["SUPERLINK_HA_OPTIONS"],
+                              on_change=runtime.stop)
+        if os.environ.get("SUPERLINK_HA_REVISION", settings.revision()) != settings.revision():
+            # A final setup request may have completed while bootstrap closed.
+            os.execv(sys.executable, [sys.executable, os.environ["SUPERLINK_HA_LAUNCHER"]])
+            return
     previous_sigterm = signal.signal(signal.SIGTERM, lambda *_: runtime.stop())
     control = mqtt_bridge = web = None
     try:
@@ -379,7 +390,7 @@ def main(argv=None):
         runtime.mqtt_bridge = mqtt_bridge
         if config.web is not None:
             from .web import ManagementServer
-            web = ManagementServer(runtime, config.web)
+            web = ManagementServer(runtime, config.web, settings=settings)
             web.start()
         runtime.run()
     finally:
@@ -390,3 +401,6 @@ def main(argv=None):
         if control is not None:
             control.stop()
         signal.signal(signal.SIGTERM, previous_sigterm)
+
+    if settings is not None and settings.restart_requested:
+        os.execv(sys.executable, [sys.executable, os.environ["SUPERLINK_HA_LAUNCHER"]])

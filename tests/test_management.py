@@ -229,7 +229,7 @@ def test_ingress_bootstrap_and_api_use_supervisor_auth(monkeypatch):
     with running_web() as (_, web):
         web.config.ingress = True
         status, body, _ = request(web, "GET", "/api/session", token=None)
-        assert status == 200 and json.loads(body) == {"ingress": True}
+        assert status == 200 and json.loads(body) == {"ingress": True, "settings": False}
         assert request(web, "GET", "/api/state", token=None)[0] == 200
 
 

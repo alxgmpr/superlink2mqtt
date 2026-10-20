@@ -1,13 +1,11 @@
-"""Home Assistant startup with a read-only setup UI until provisioning is ready."""
+"""Home Assistant startup with settings available before radio provisioning."""
 from concurrent.futures import Future
-import json
 import logging
 import os
 from pathlib import Path
 import secrets
 import signal
 import threading
-import urllib.request
 
 import yaml
 
@@ -15,50 +13,7 @@ from superlink.bridge.config import RuntimeConfig, WebConfig
 from superlink.bridge.store import JsonDeviceStore
 from superlink.bridge.web import ManagementServer
 
-
-def mqtt_service():
-    request = urllib.request.Request("http://supervisor/services/mqtt", headers={
-        "Authorization": "Bearer " + os.environ["SUPERVISOR_TOKEN"]})
-    with urllib.request.urlopen(request, timeout=10) as response:
-        return json.load(response)["data"]
-
-
-def prepare(root, options_path, get_mqtt=mqtt_service):
-    """Read prerequisites without generating identities or rewriting user files."""
-    options = json.loads(options_path.read_text())
-    missing = []
-    if not options.get("radio_host"):
-        missing.append("radio_host")
-    for name in ("radio_ed25519", "known_hosts", "bridge.yaml"):
-        if not (root / name).is_file():
-            missing.append(name)
-    if missing:
-        return None, missing
-    try:
-        config = yaml.safe_load((root / "bridge.yaml").read_text())
-        if not isinstance(config, dict) or len(bytes.fromhex(config.get("gw_mac", ""))) != 6:
-            return None, ["bridge.yaml"]
-    except (ValueError, TypeError, yaml.YAMLError):
-        return None, ["bridge.yaml"]
-    config["radio"] = {
-        "host": options["radio_host"], "username": options.get("radio_user", "alex"),
-        "port": options.get("radio_port", 22), "key_file": str(root / "radio_ed25519"),
-        "known_hosts": str(root / "known_hosts"),
-    }
-    config["store_path"] = str(root / "devices.json")
-    config["control_socket"] = None
-    config["web"] = {"host": "0.0.0.0", "port": 8099, "ingress": True}
-    try:
-        mqtt = get_mqtt()
-        existing = config.get("mqtt") or {}
-        config["mqtt"] = {"host": mqtt["host"], "port": mqtt["port"],
-                          "username": mqtt["username"], "password": mqtt["password"],
-                          "tls": mqtt.get("ssl", False),
-                          "base_topic": existing.get("base_topic", "superlink"),
-                          "discovery_prefix": existing.get("discovery_prefix", "homeassistant")}
-    except (OSError, ValueError, KeyError, TypeError):
-        return None, ["mqtt"]
-    return config, []
+from superlink.bridge.ha_settings import HASettings, prepare
 
 
 class PendingSetup:
@@ -108,6 +63,10 @@ def main(root=Path("/config"), options_path=Path("/data/options.json"),
     logging.basicConfig(level=logging.INFO)
     token = secrets.token_urlsafe(32)
     os.environ["SUPERLINK_WEB_TOKEN"] = token
+    os.environ["SUPERLINK_HA_ROOT"] = str(root)
+    os.environ["SUPERLINK_HA_OPTIONS"] = str(options_path)
+    os.environ["SUPERLINK_HA_LAUNCHER"] = str(Path(__file__).resolve())
+    settings = HASettings(root, options_path)
     pending = PendingSetup()
     stopped = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -115,6 +74,7 @@ def main(root=Path("/config"), options_path=Path("/data/options.json"),
     server = None
     try:
         while not stopped.is_set():
+            prepared_revision = settings.revision()
             try:
                 config, missing = prepare(root, options_path)
             except (OSError, ValueError, TypeError, AttributeError):
@@ -127,11 +87,12 @@ def main(root=Path("/config"), options_path=Path("/data/options.json"),
                 except (ValueError, TypeError, KeyError, AttributeError):
                     config, missing = None, ["bridge.yaml"]
             healthy_store = pending.update(root, missing)
+            pending.state["settings_revision"] = settings.revision()
             if config is not None and healthy_store:
                 break
             if server is None:
                 server = ManagementServer(pending, WebConfig(token, host="0.0.0.0", port=8099, ingress=True),
-                                          management=pending)
+                                          management=pending, settings=settings)
                 server.start()
                 logging.info("Setup UI ready; waiting for radio and MQTT configuration")
             stopped.wait(5)
@@ -139,6 +100,7 @@ def main(root=Path("/config"), options_path=Path("/data/options.json"),
         if server is not None:
             server.stop()
     if not stopped.is_set():
+        os.environ["SUPERLINK_HA_REVISION"] = prepared_revision
         os.execvp("superlink-bridged", ["superlink-bridged", "--config", str(path)])
 
 
