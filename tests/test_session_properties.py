@@ -324,6 +324,8 @@ class ReconnectMachine(RuleBasedStateMachine):
         self.backoff_until = 0
         self.queue = []
         self.key = None
+        self.dl_ctr = 0
+        self.dl_unacked = False
 
     def teardown(self):
         self.entropy.__exit__(None, None, None)
@@ -366,6 +368,7 @@ class ReconnectMachine(RuleBasedStateMachine):
         else:
             _, self.key = complete_handshake(self.session, self.now,
                                              private=private, channel=channel, seq=seq)
+            self.dl_ctr, self.dl_unacked = 0, False
             self.active = True
             self.last_data = self.now
 
@@ -378,9 +381,15 @@ class ReconnectMachine(RuleBasedStateMachine):
         frames, _ = feed(self.session, raw, self.now, channel)
         if kind in (0x54, 0x44):
             self.last_data = self.now
+        if self.dl_unacked:   # this decoded UL acks our previous 0x74
+            self.dl_ctr, self.dl_unacked = self.dl_ctr + 1, False
         if self.queue:
-            assert len(frames) == 1
-            assert unwrap(frames[0].data, self.key) == self.queue.pop(0)
+            assert len(frames) == 1 and frames[0].data[1] == 0x74
+            assert unwrap(frames[0].data, self.key, self.dl_ctr) == self.queue.pop(0)
+            self.dl_unacked = True
+        elif kind in (0x54, 0x53):   # confirmed UL: bare 0x63 ACK
+            assert len(frames) == 1 and frames[0].data[1] == 0x63
+            assert unwrap(frames[0].data, self.key, self.dl_ctr) == b"\x01\x00"
         else:
             assert frames == []
 
