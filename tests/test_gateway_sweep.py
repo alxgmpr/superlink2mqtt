@@ -104,9 +104,7 @@ def test_0x53_command_window_triggers_probe_tx():
     assert tx_data is not None and tx_freq > 0
     tf = parse_frame(tx_data)
     assert tf.dctrl == 0x74 and tf.seq_hi == 0x01 and tf.seq_lo == 0x81
-    # A PING keep-alive on the 0x54 window was acked by the 0x53, so the probe
-    # rides the next DL counter.
-    f = decrypt_frame(tf, s.session_key, dl_counter=1 if tx54 is not None else 0)
+    f = decrypt_frame(tf, s.session_key, dl_counter=0)
     assert f.payload[0] == appmsg.MessageId.DEVICE_INFO_REQUEST
 
 

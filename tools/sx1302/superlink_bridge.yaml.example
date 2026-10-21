@@ -23,9 +23,9 @@ log:
   csv: null                   # optional path to append decoded events as CSV
 
 # Seconds of telemetry silence before the bridge treats the link as lost and
-# re-handshakes on the sensor's next discovery (~a few missed reports). The
+# re-handshakes on the sensor's next discovery (two missed 300s reports). The
 # timeout gates re-handshakes so they can't storm-loop.
-link_lost_timeout: 60
+link_lost_timeout: 700
 
 # Operator control socket: inject app-layer commands into the RUNNING daemon
 # without killing it (killing it drops the SX1302 and red-lights the sensor).

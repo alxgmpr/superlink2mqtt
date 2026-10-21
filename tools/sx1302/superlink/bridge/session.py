@@ -207,6 +207,7 @@ class DeviceSession:
         # 0x74 and 0x63, advances only once the sensor acks a confirmed 0x74.
         self._dl_ctr = 0
         self._dl_unacked = False
+        self._dl_seq = 0   # gateway's own DL seq_hi, one per DL frame
 
         # Timing (now-clock for the new surface; monotonic for the legacy
         # beacon_due()/build_beacon() adapter path — a given instance is driven
@@ -505,11 +506,9 @@ class DeviceSession:
             return None
         from ..hal import DL_FREQ_HZ
         dl_freq = DL_FREQ_HZ[channel - 1]
-        ctr = self._dl_ctr
-        tx = self._build_command(frame.mac, body, frame.seq_hi)
-        log.info("cmd (reply to 0x53) -> %s seq=%02X.81 ctr=%d body=%s on %.1f MHz",
-                 format_mac(frame.mac), frame.seq_hi, ctr, body.hex(),
-                 dl_freq / 1e6)
+        tx = self._dl_frame(frame, 0x74, body)
+        log.info("cmd (reply to 0x53) -> %s body=%s on %.1f MHz",
+                 format_mac(frame.mac), body.hex(), dl_freq / 1e6)
         return OutgoingFrame(data=tx, freq_hz=dl_freq, channel=channel)
 
     def _sustain(self, frame: SuperLinkFrame, channel: int
@@ -531,10 +530,9 @@ class DeviceSession:
             return None
         from ..hal import DL_FREQ_HZ
         dl_freq = DL_FREQ_HZ[channel - 1]
-        tx = self._build_command(frame.mac, body, frame.seq_hi)
-        log.info("cmd (push on 0x%02X window) -> %s seq=%02X body=%s on %.1f MHz",
-                 frame.dctrl, format_mac(frame.mac), frame.seq_hi, body.hex(),
-                 dl_freq / 1e6)
+        tx = self._dl_frame(frame, 0x74, body)
+        log.info("cmd (push on 0x%02X window) -> %s body=%s on %.1f MHz",
+                 frame.dctrl, format_mac(frame.mac), body.hex(), dl_freq / 1e6)
         return OutgoingFrame(data=tx, freq_hz=dl_freq, channel=channel)
 
     def _on_commit(self) -> None:
@@ -795,19 +793,11 @@ class DeviceSession:
         """Bare MAC ACK of a confirmed UL (0x53/0x54): management type 0 body
         `01 00` on DL 0x63, as lorabrd sends whenever nothing is queued
         (FUN_00053838 -> FUN_00051930). Without it the sensor never sees its
-        uplink confirmed: its UL counter sticks at 0 and it re-sends every ~11s.
-        Unconfirmed itself, so the DL counter does not advance."""
+        uplink confirmed: its UL counter sticks at 0 and it re-sends every ~11s."""
         if not (self._adopted and 1 <= channel <= 8):
             return None
         from ..hal import DL_FREQ_HZ
-        body = b"\x01\x00"
-        seq_hi, seq_lo = frame.seq_hi, (frame.seq_lo + 1) & 0xFF
-        header = bytes([0xE0, 0x63]) + frame.mac + bytes([seq_hi, seq_lo])
-        tx = build_frame(0xE0, 0x63, frame.mac, seq_hi, seq_lo,
-                         compute_mic(header, body), body, self.session_key,
-                         counter=self._dl_ctr)
-        log.info("ACK 0x%02X -> 0x63 seq=%02X.%02X ctr=%d", frame.dctrl,
-                 seq_hi, seq_lo, self._dl_ctr)
+        tx = self._dl_frame(frame, 0x63, b"\x01\x00")
         return OutgoingFrame(data=tx, freq_hz=DL_FREQ_HZ[channel - 1],
                              channel=channel)
 
@@ -834,14 +824,32 @@ class DeviceSession:
         """0x74 DL reply (sweep probes / mgmt replies)."""
         return self._build_dl_reply(mac, body, dctrl=0x74)
 
-    def _build_command(self, mac: bytes, body: bytes, seq_hi: int,
-                       seq_lo: int = 0x81) -> bytes:
-        """Build a DL 0x74 command frame in the sensor's command-window format
-        (seq_lo 0x81) — the shape the sensor accepts for ADOPT_REQUEST and
-        DEVICE_INFO_REQUEST. Uses the session DL counter (0 for the first
-        command) and marks it awaiting the sensor's ack."""
+    def _dl_frame(self, ul: SuperLinkFrame, dctrl: int, body: bytes) -> bytes:
+        """In-session DL frame answering `ul` (lorabrd framing, every keyhook
+        capture): seq_hi is the gateway's own DL count; seq_lo bit 7 = ACK with
+        the acked UL's seq_hi in the low 6 bits (bit 6 also set on 0x74).
+        Counter is shared by 0x74/0x63 and only a 0x74 awaits the sensor's ack.
+        """
+        self._dl_seq = (self._dl_seq + 1) & 0xFF
+        seq_hi = self._dl_seq
+        if ul.dctrl in (0x53, 0x54):      # confirmed UL: this frame acks it
+            seq_lo = 0x80 | (ul.seq_hi & 0x3F) | (0x40 if dctrl == 0x74 else 0)
+        else:
+            seq_lo = secrets.randbelow(0x80)
         ctr = self._dl_ctr
-        self._dl_unacked = True
+        if dctrl == 0x74:
+            self._dl_unacked = True
+        header = bytes([0xE0, dctrl]) + ul.mac + bytes([seq_hi, seq_lo])
+        log.info("DL 0x%02X seq=%02X.%02X ctr=%d (UL 0x%02X %02X.%02X)", dctrl,
+                 seq_hi, seq_lo, ctr, ul.dctrl, ul.seq_hi, ul.seq_lo)
+        return build_frame(0xE0, dctrl, ul.mac, seq_hi, seq_lo,
+                           compute_mic(header, body), body, self.session_key,
+                           counter=ctr)
+
+    def _build_command(self, mac: bytes, body: bytes, seq_hi: int,
+                       seq_lo: int = 0x81, ctr: int = 0) -> bytes:
+        """Legacy (gateway.py) DL 0x74 command in the command-window format
+        (seq_lo 0x81, ctr 0). The bridge session uses _dl_frame."""
         seq_hi &= 0xFF
         header = bytes([0xE0, 0x74]) + mac + bytes([seq_hi, seq_lo])
         mic = compute_mic(header, body)
@@ -1036,6 +1044,7 @@ class DeviceSession:
             self._ul_counter_offset = frame.seq_hi
             self._dl_ctr = 0
             self._dl_unacked = False
+            self._dl_seq = 0
             self._state = State.ACTIVE
             self._short_challenge_count = 0   # handshake completed; clear the tally
             log.info("Session key derived (kdf_ctx=%s...)",
