@@ -67,7 +67,7 @@ def test_control_socket_explicit_path(tmp_path):
 
 def test_link_lost_timeout_default_and_override(tmp_path):
     c = RuntimeConfig.load(_write(tmp_path, YAML_ALL))
-    assert c.link_lost_timeout == 60.0
+    assert c.link_lost_timeout == 700.0
     c2 = RuntimeConfig.load(_write(
         tmp_path, 'gw_mac: "010203040506"\nadopt: all\nlink_lost_timeout: 45\n'))
     assert c2.link_lost_timeout == 45.0
@@ -75,7 +75,7 @@ def test_link_lost_timeout_default_and_override(tmp_path):
 
 def test_watchdog_defaults_and_override(tmp_path):
     c = RuntimeConfig.load(_write(tmp_path, YAML_ALL))
-    assert c.watchdog_timeout == 150.0
+    assert c.watchdog_timeout == 900.0
     assert c.watchdog_short_challenge_k == 3
     c2 = RuntimeConfig.load(_write(
         tmp_path, 'gw_mac: "010203040506"\nadopt: all\n'

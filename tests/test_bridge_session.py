@@ -314,7 +314,8 @@ def test_no_command_pushed_without_queue():
     s = _active_data_session()
     s._adopted = True
     frames, _ = s.feed(_craft_data_frame(s.session_key), channel=3, now=6.0)
-    assert not any(isinstance(f, OutgoingFrame) for f in frames)
+    # Only lorabrd's bare MAC ACK (0x63) for the confirmed 0x54, no 0x74.
+    assert [f.data[1] for f in frames] == [0x63]
 
 
 def test_undecodable_data_does_not_refresh_liveness():

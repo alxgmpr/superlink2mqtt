@@ -66,14 +66,12 @@ class RuntimeConfig:
     spi_path: str = "/dev/spidev0.0"
     reset_script: str = field(default_factory=lambda: os.path.expanduser(
         "~/sx1302_hal/tools/reset_lgw.sh"))
-    # This sensor streams telemetry every ~11s while connected (measured on
-    # hardware, door open AND closed — REPORT_INTERVAL=300 does NOT govern the
-    # connected cadence), so 60/150s tolerate several missed reports before
-    # declaring the link lost. Do NOT raise these to "cover" a 300s interval —
-    # the connected link is never that quiet, and longer timeouts only delay a
-    # genuinely-dead device going offline in HA.
-    link_lost_timeout: float = 60.0
-    watchdog_timeout: float = 150.0
+    # Once its confirmed uplinks are ACKed (0x63), the sensor reports every
+    # REPORT_INTERVAL (300s, set post-adoption; measured on hardware). The old
+    # ~11s cadence was un-ACKed retries. Allow two missed reports before
+    # declaring the link lost; the watchdog escalates after three.
+    link_lost_timeout: float = 700.0
+    watchdog_timeout: float = 900.0
     watchdog_short_challenge_k: int = 3
 
     @classmethod
@@ -149,8 +147,8 @@ class RuntimeConfig:
             hal_library=os.path.expanduser(doc.get("hal_library", "~/sx1302_hal/libloragw/libloragw.so")),
             spi_path=doc.get("spi_path", "/dev/spidev0.0"),
             reset_script=os.path.expanduser(doc.get("reset_script", "~/sx1302_hal/tools/reset_lgw.sh")),
-            link_lost_timeout=float(doc.get("link_lost_timeout", 60.0)),
-            watchdog_timeout=float(doc.get("watchdog_timeout", 150.0)),
+            link_lost_timeout=float(doc.get("link_lost_timeout", 700.0)),
+            watchdog_timeout=float(doc.get("watchdog_timeout", 900.0)),
             watchdog_short_challenge_k=int(
                 doc.get("watchdog_short_challenge_k", 3)),
         )

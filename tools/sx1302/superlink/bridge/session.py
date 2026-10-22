@@ -203,6 +203,11 @@ class DeviceSession:
         self._tx_seq_hi = 0
         self._tx_seq_lo = 0
         self._ul_counter_offset = 0
+        # Gateway DL nonce counter (lorabrd model, pass2 ground truth): shared by
+        # 0x74 and 0x63, advances only once the sensor acks a confirmed 0x74.
+        self._dl_ctr = 0
+        self._dl_unacked = False
+        self._dl_seq = 0   # gateway's own DL seq_hi, one per DL frame
 
         # Timing (now-clock for the new surface; monotonic for the legacy
         # beacon_due()/build_beacon() adapter path — a given instance is driven
@@ -501,9 +506,9 @@ class DeviceSession:
             return None
         from ..hal import DL_FREQ_HZ
         dl_freq = DL_FREQ_HZ[channel - 1]
-        tx = self._build_command(frame.mac, body, frame.seq_hi)
-        log.info("cmd (reply to 0x53) -> %s seq=%02X.81 ctr=0 body=%s on %.1f MHz",
-                 format_mac(frame.mac), frame.seq_hi, body.hex(), dl_freq / 1e6)
+        tx = self._dl_frame(frame, 0x74, body)
+        log.info("cmd (reply to 0x53) -> %s body=%s on %.1f MHz",
+                 format_mac(frame.mac), body.hex(), dl_freq / 1e6)
         return OutgoingFrame(data=tx, freq_hz=dl_freq, channel=channel)
 
     def _sustain(self, frame: SuperLinkFrame, channel: int
@@ -525,10 +530,9 @@ class DeviceSession:
             return None
         from ..hal import DL_FREQ_HZ
         dl_freq = DL_FREQ_HZ[channel - 1]
-        tx = self._build_command(frame.mac, body, frame.seq_hi)
-        log.info("cmd (push on 0x%02X window) -> %s seq=%02X body=%s on %.1f MHz",
-                 frame.dctrl, format_mac(frame.mac), frame.seq_hi, body.hex(),
-                 dl_freq / 1e6)
+        tx = self._dl_frame(frame, 0x74, body)
+        log.info("cmd (push on 0x%02X window) -> %s body=%s on %.1f MHz",
+                 frame.dctrl, format_mac(frame.mac), body.hex(), dl_freq / 1e6)
         return OutgoingFrame(data=tx, freq_hz=dl_freq, channel=channel)
 
     def _on_commit(self) -> None:
@@ -618,7 +622,7 @@ class DeviceSession:
         # A heuristic decrypt is useful to the legacy diagnostic caller, but
         # it must not emit application events, rotate keys, or drain commands
         # unless its MIC verifies. This also accepts a valid fallback counter
-        # outside the bounded 0..63 scan.
+        # outside the bounded 0..255 scan.
         header = (bytes([frame.mctrl, frame.dctrl]) + frame.mac
                   + bytes([frame.seq_hi, frame.seq_lo]))
         if (frame.payload is None
@@ -627,6 +631,12 @@ class DeviceSession:
         if frame.dctrl in (0x54, 0x44):
             self._last_data_rx = self._now
             self._short_challenge_count = 0
+        # A decoded UL after our confirmed 0x74 is the sensor's ack of it.
+        # ponytail: assumes the 0x74 landed; a lost one desyncs the DL counter
+        # until the next handshake resets it.
+        if self._dl_unacked:
+            self._dl_ctr += 1
+            self._dl_unacked = False
         log.info("RX dctrl=0x%02X %s seq=%02X.%02X %s",
                  frame.dctrl, format_mac(frame.mac),
                  frame.seq_hi, frame.seq_lo,
@@ -768,12 +778,28 @@ class DeviceSession:
         # Post-adoption: the sensor's 0x53 mgmt poll is its COMMAND WINDOW — the
         # only point it listens for and acts on a request. Drain a queued body.
         if frame.dctrl == 0x53 and 1 <= channel <= 8 and self._adopted:
-            of = self._command_window(frame, channel)
+            of = self._command_window(frame, channel) or self._ack(frame, channel)
             return frame, ([of] if of is not None else []), events
 
-        # Optional sustained DL follow-up (RE sweep, in the adapter).
+        # Optional sustained DL follow-up (RE sweep, in the adapter). A queued
+        # 0x74 also acks the uplink; otherwise a confirmed 0x54 gets a bare ACK.
         of = self._sustain(frame, channel)
+        if of is None and frame.dctrl == 0x54:
+            of = self._ack(frame, channel)
         return frame, ([of] if of is not None else []), events
+
+    def _ack(self, frame: SuperLinkFrame, channel: int
+             ) -> OutgoingFrame | None:
+        """Bare MAC ACK of a confirmed UL (0x53/0x54): management type 0 body
+        `01 00` on DL 0x63, as lorabrd sends whenever nothing is queued
+        (FUN_00053838 -> FUN_00051930). Without it the sensor never sees its
+        uplink confirmed: its UL counter sticks at 0 and it re-sends every ~11s."""
+        if not (self._adopted and 1 <= channel <= 8):
+            return None
+        from ..hal import DL_FREQ_HZ
+        tx = self._dl_frame(frame, 0x63, b"\x01\x00")
+        return OutgoingFrame(data=tx, freq_hz=DL_FREQ_HZ[channel - 1],
+                             channel=channel)
 
     # ------------------------------------------------------------- DL builders
     def _build_dl_reply(self, mac: bytes, body: bytes, dctrl: int = 0x74) -> bytes:
@@ -798,11 +824,32 @@ class DeviceSession:
         """0x74 DL reply (sweep probes / mgmt replies)."""
         return self._build_dl_reply(mac, body, dctrl=0x74)
 
+    def _dl_frame(self, ul: SuperLinkFrame, dctrl: int, body: bytes) -> bytes:
+        """In-session DL frame answering `ul` (lorabrd framing, every keyhook
+        capture): seq_hi is the gateway's own DL count; seq_lo bit 7 = ACK with
+        the acked UL's seq_hi in the low 6 bits (bit 6 also set on 0x74).
+        Counter is shared by 0x74/0x63 and only a 0x74 awaits the sensor's ack.
+        """
+        self._dl_seq = (self._dl_seq + 1) & 0xFF
+        seq_hi = self._dl_seq
+        if ul.dctrl in (0x53, 0x54):      # confirmed UL: this frame acks it
+            seq_lo = 0x80 | (ul.seq_hi & 0x3F) | (0x40 if dctrl == 0x74 else 0)
+        else:
+            seq_lo = secrets.randbelow(0x80)
+        ctr = self._dl_ctr
+        if dctrl == 0x74:
+            self._dl_unacked = True
+        header = bytes([0xE0, dctrl]) + ul.mac + bytes([seq_hi, seq_lo])
+        log.info("DL 0x%02X seq=%02X.%02X ctr=%d (UL 0x%02X %02X.%02X)", dctrl,
+                 seq_hi, seq_lo, ctr, ul.dctrl, ul.seq_hi, ul.seq_lo)
+        return build_frame(0xE0, dctrl, ul.mac, seq_hi, seq_lo,
+                           compute_mic(header, body), body, self.session_key,
+                           counter=ctr)
+
     def _build_command(self, mac: bytes, body: bytes, seq_hi: int,
                        seq_lo: int = 0x81, ctr: int = 0) -> bytes:
-        """Build a DL 0x74 command frame in the sensor's command-window format
-        (seq_lo 0x81, ctr 0) — the shape the sensor accepts for ADOPT_REQUEST
-        and DEVICE_INFO_REQUEST."""
+        """Legacy (gateway.py) DL 0x74 command in the command-window format
+        (seq_lo 0x81, ctr 0). The bridge session uses _dl_frame."""
         seq_hi &= 0xFF
         header = bytes([0xE0, 0x74]) + mac + bytes([seq_hi, seq_lo])
         mic = compute_mic(header, body)
@@ -841,14 +888,16 @@ class DeviceSession:
 
         The MIC is BLAKE2b-32 over header(10B) || 4 zero bytes || plaintext, so
         for each candidate counter we decrypt and check the recomputed MIC
-        against the decrypted MIC. Returns the counter (0..63) or None.
+        against the decrypted MIC. Returns the counter (0..255) or None.
         """
         if not _HAS_CRYPTO or not frame.encrypted or self.session_key is None:
             return None
         header = (bytes([frame.mctrl, frame.dctrl]) + frame.mac
                   + bytes([frame.seq_hi, frame.seq_lo]))
         ct = frame.encrypted
-        for c in range(0, 64):
+        # Counter advances once per acked uplink. ponytail: nonce carries one
+        # byte; encoding past 255 is unverified (watch for SCAN-FAIL).
+        for c in range(0, 256):
             nonce = build_nonce(frame.mctrl, frame.dctrl, frame.mac,
                                 frame.seq_hi, frame.seq_lo, c)
             pt = pysodium.crypto_stream_xor(ct, len(ct), nonce, self.session_key)
@@ -993,6 +1042,9 @@ class DeviceSession:
             self.sensor_mac = frame.mac
             self.session_key = session_key
             self._ul_counter_offset = frame.seq_hi
+            self._dl_ctr = 0
+            self._dl_unacked = False
+            self._dl_seq = 0
             self._state = State.ACTIVE
             self._short_challenge_count = 0   # handshake completed; clear the tally
             log.info("Session key derived (kdf_ctx=%s...)",
