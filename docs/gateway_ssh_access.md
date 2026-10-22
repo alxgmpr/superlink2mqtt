@@ -69,28 +69,77 @@ Default credentials are `ubnt` with the password shown in the device's local web
 ssh ubnt@<DEVICE_IP>
 ```
 
-## What actually worked (2026-07-22, after a bridge reset)
+## Re-enabling SSH on our bridge (working procedure)
 
-- **Bridge real IP is `10.1.10.141`** (host subnet), NOT `10.1.1.141`. The old
-  `10.1.1.141` in older docs is stale — confirm the current `host` from the API
-  (`GET /proxy/protect/api/bridges` → `host` field).
-- Controller = the **UCG-Fiber console** at `10.1.1.1` (UniFi OS 5.1.26, Protect 7.1.87).
-  Root SSH to it via `~/.ssh/config` host `router` (key auth).
-- The `isSshEnabled` toggle exists **only on the internal `/proxy/protect/api/bridges/<id>`
-  path**, which requires a logged-in **session cookie + CSRF token**. A Protect
-  **Integration API key** (`X-API-KEY`, `/proxy/protect/integration/v1/...`) is read-only
-  for this purpose — it can enumerate bridges but its PATCH schema rejects `isSshEnabled`
-  ("must NOT have additional properties"). Root-on-console alone also does NOT get a
-  Protect session (internal `/api/` → 401 for API-key/Bearer/mTLS-direct-cert).
-- **Working method:** drive the user's already-authenticated browser session. From the
-  Protect/Network web UI (past the self-signed cert), `fetch('/proxy/protect/api/bridges',
-  {credentials:'include'})` returns 200 + an `x-csrf-token` response header; then
-  `PATCH /proxy/protect/api/bridges/<id>` and `PATCH /proxy/protect/api/nvr` with
-  `{"isSshEnabled":true}` and header `x-csrf-token`. Both return 200. **SSH came up
-  immediately — no device reboot required.**
-- Bridge id: `6a612ad103c80a03e4027261`, MAC `9041B23483DC`, name "USL Gateway".
-- SSH in: `ssh ubnt@10.1.10.141` (password = the `webpass`, baked into
-  `tools/keyhook/capture_key.sh`).
+Every bridge reset / re-adoption / firmware reprovision clears `isSshEnabled`, so this
+is a recurring step. The curl flow above is the generic method; this is what works here.
+
+- Controller = the **UCG-Fiber console** at `10.1.1.1` (UniFi OS). Root SSH to it via
+  `~/.ssh/config` host `router` (key auth) — not needed for this procedure.
+- Bridge id `6a612ad103c80a03e4027261`, MAC `9041B23483DC`, name "USL Gateway".
+- The bridge IP drifts across resets (has been both `10.1.1.141` and `10.1.10.141`).
+  Trust the `host` field from the API, not a hardcoded value.
+
+**Shortcuts that don't work:**
+
+- A Protect **Integration API key** (`X-API-KEY`, `/proxy/protect/integration/v1/...`)
+  is read-only here: it can list bridges, but its PATCH schema rejects `isSshEnabled`
+  ("must NOT have additional properties"). It is still useful for reading state
+  (`GET /proxy/protect/integration/v1/bridges` to confirm the bridge is `CONNECTED`).
+- Root on the console does not get a Protect session: the internal `/api/` returns 401
+  for API-key, `Authorization: Bearer`, and the `unifi-core-direct` mTLS client cert.
+
+The toggle exists only on the internal `/proxy/protect/api/...` path, which needs a
+logged-in session cookie + CSRF token. The reliable way to get one is an
+already-authenticated browser session.
+
+### 1. Open a Protect session in the browser
+
+Open the Network/Protect web UI at `https://10.1.1.1/` and accept the self-signed cert.
+Run the snippets below from that page (devtools console, or Claude's
+`claude-in-chrome` `javascript_tool`) so they are same-origin with cookies.
+
+### 2. Read the bridge and the CSRF token
+
+```js
+const r = await fetch('/proxy/protect/api/bridges', {credentials:'include'});
+const csrf = r.headers.get('x-csrf-token');
+const b = (await r.json())[0];
+({ id: b.id, host: b.host, mac: b.mac, isSshEnabled: b.isSshEnabled, csrf });
+```
+
+### 3. Enable SSH on the bridge AND the NVR
+
+Both are required; the NVR-level flag gates propagation.
+
+```js
+const CSRF = '<csrf-from-step-2>';
+async function patch(path){
+  const r = await fetch(path, {method:'PATCH', credentials:'include',
+    headers:{'Content-Type':'application/json','x-csrf-token':CSRF},
+    body: JSON.stringify({isSshEnabled:true})});
+  return {path, status:r.status, isSshEnabled:(await r.json()).isSshEnabled};
+}
+[ await patch('/proxy/protect/api/bridges/6a612ad103c80a03e4027261'),
+  await patch('/proxy/protect/api/nvr') ];
+```
+
+Expect `status:200, isSshEnabled:true` on both. **No reboot needed**: SSH comes up within
+a second or two.
+
+### 4. Verify
+
+User `ubnt`, password = the `webpass` in `tools/keyhook/capture_key.sh`. Use `host` from
+step 2:
+
+```bash
+sshpass -p '<webpass>' ssh -o StrictHostKeyChecking=accept-new \
+  ubnt@<bridge_host> 'echo SSH_OK; uname -a; pidof lorabrd && echo lorabrd_running'
+```
+
+`SSH_OK` + `lorabrd_running` means done. If it still refuses after ~10 s, re-check that
+both PATCHes returned 200, then reboot the bridge (UI, or `reboot` over SSH once
+reachable) and retry.
 
 ## Notes
 
