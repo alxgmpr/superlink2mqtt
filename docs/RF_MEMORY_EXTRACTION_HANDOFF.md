@@ -116,8 +116,8 @@ to prove live keystore extraction over SWD.
   `si SWD`, `speed 1000`. `tools/sensor_swd/analyze_ram.py` hunts keys in a dump.
 - **Real UniFi bridge** (`lorabrd`): `ubnt@10.1.10.141`, pw
   `zaLsHMDA7IdjmVhR1sFyODonQPfZ6h` (FORCE password auth; `scp -O`). Keyhook:
-  `tools/keyhook/`. SSH disabled on bridge reset → re-enable via the
-  `reenable-bridge-ssh` skill / Protect web UI.
+  `tools/keyhook/`. SSH disabled on bridge reset → re-enable per
+  `docs/gateway_ssh_access.md` (Protect web UI session).
 - **Protect firmware (controller source)**: `firmware/dumps/UNVR-5.0.16-*.bin`,
   squashfs `service.js` (module 41118 messages.ts, 31048 deviceAdopt.ts, 62701
   constants, 17695 properties). Extract per `sensor_sram_keystore.md`.
