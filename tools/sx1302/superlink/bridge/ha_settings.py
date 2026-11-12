@@ -111,7 +111,7 @@ class HASettings:
     def values(self):
         doc, base = self.read(), self.base()
         options = json.loads(self.options_path.read_text())
-        radio = {"host": options.get("radio_host", ""), "username": options.get("radio_user", "alex"),
+        radio = {"host": options.get("radio_host", ""), "username": options.get("radio_user", "pi"),
                  "port": options.get("radio_port", 22), "host_key": ""}
         radio.update(doc.get("radio", {}))
         if not radio["host_key"] and (self.root / "known_hosts").is_file():
@@ -267,7 +267,7 @@ def prepare(root, options_path, get_mqtt=mqtt_service):
         config = copy.deepcopy(settings.base()) or {"gw_mac": doc["gateway_mac"], "adopt": []}
     except (ValueError, KeyError):
         return None, ["bridge.yaml"]
-    config["radio"] = {"host": options.get("radio_host", ""), "username": options.get("radio_user", "alex"),
+    config["radio"] = {"host": options.get("radio_host", ""), "username": options.get("radio_user", "pi"),
                        "port": options.get("radio_port", 22), "key_file": str(root / "radio_ed25519"),
                        "known_hosts": str(root / "known_hosts")}
     if radio:

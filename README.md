@@ -160,7 +160,7 @@ Things to know:
 | `tools/sx1302/superlink/` | The Python package: radio HAL, decoder, crypto, bridge daemon, MQTT, web UI |
 | `homeassistant/superlink2mqtt/` | Home Assistant app definition and setup guide |
 | `docs/protocol/` | Reverse-engineered protocol specs |
-| `tests/` | pytest suite (`pip install -e '.[mqtt,test]' && pytest`) |
+| `tests/` | pytest suite (`pip install -e '.[test]' && pytest`) |
 | `tools/sniffer/`, `tools/sdr/`, `tools/keyhook/`, … | Research tooling used to reverse the protocol; not needed to run the bridge |
 | `verification/lean/` | Lean proofs for parts of the protocol model |
 

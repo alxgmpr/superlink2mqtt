@@ -9,11 +9,11 @@ first: `sudo apt-get install libsodium-dev` on Debian/Raspberry Pi OS, or
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[mqtt,test]'
+python -m pip install -e '.[test]'
 python -m pytest
 ```
 
-The `mqtt` extra installs paho-mqtt; the `test` extra includes the historical
+The `test` extra includes the historical
 mock-controller test dependencies. PlatformIO and other RE utilities remain
 separate from the bridge runtime. Install Mosquitto (`apt-get install mosquitto`
 or `brew install mosquitto`) to run local broker integration tests; they use a

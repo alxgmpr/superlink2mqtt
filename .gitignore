@@ -80,3 +80,10 @@ tools/sensor_swd/*.log
 .pytest_cache/
 superlink_bridge.yaml
 superlink_devices.json*
+
+# AI process artifacts stay local
+CLAUDE.md
+AGENTS.md
+docs/superpowers/
+.superpowers/
+docs/plans/

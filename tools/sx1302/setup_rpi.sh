@@ -12,7 +12,7 @@ echo "=== Creating Python venv ==="
 cd ~
 python3 -m venv superlink-venv
 source ~/superlink-venv/bin/activate
-python -m pip install "$REPO_ROOT[mqtt]"
+python -m pip install "$REPO_ROOT"
 
 echo "=== Building libloragw.so ==="
 cd ~/sx1302_hal

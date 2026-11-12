@@ -7,7 +7,7 @@ radio or MQTT broker.
 
 ## Install and preview
 
-Use Python 3.11 or newer and install libsodium first (`libsodium-dev` on
+Use Python 3.12 or newer and install libsodium first (`libsodium-dev` on
 Debian/Raspberry Pi OS, `libsodium` with Homebrew on macOS). From the repository:
 
 ```sh

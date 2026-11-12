@@ -38,7 +38,7 @@ SuperLink sensors ↔ Pi / SX1302 ↔ superlink2mqtt → MQTT broker → Home As
 4. Restrict that key in the Pi account's `authorized_keys` to a fixed wrapper:
 
    ```text
-   restrict,command="/home/alex/superlink-radio/run" ssh-ed25519 ...
+   restrict,command="/home/pi/superlink-radio/run" ssh-ed25519 ...
    ```
 
    Substitute your account and path. The wrapper should set any required

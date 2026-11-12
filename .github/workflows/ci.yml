@@ -131,7 +131,7 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libsodium-dev mosquitto
       - name: Install bridge and test dependencies
-        run: python -m pip install '.[mqtt,test]'
+        run: python -m pip install '.[test]'
       - name: Test
         env:
           HYPOTHESIS_PROFILE: ci

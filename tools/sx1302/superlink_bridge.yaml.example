@@ -7,7 +7,7 @@ gw_mac: "010203040506"        # this bridge's 6-byte gateway MAC (hex)
 # Or keep the SX1302 on a Pi and run this daemon elsewhere over pinned SSH:
 # radio:
 #   host: "192.168.1.20"
-#   username: "alex"
+#   username: "pi"
 #   port: 22
 #   key_file: "/data/radio_ed25519"
 #   known_hosts: "/data/known_hosts"
@@ -44,7 +44,7 @@ control_socket: "/tmp/superlink_bridge.sock"
 
 # Optional: MQTT / Home Assistant. DISABLED by default — uncomment this whole
 # block (and set `host`) to enable. With it commented out, the daemon runs with
-# no MQTT and no paho dependency.
+# no MQTT.
 # mqtt:
 #   host: "192.168.1.10"       # MQTT broker (required to enable)
 #   port: 1883

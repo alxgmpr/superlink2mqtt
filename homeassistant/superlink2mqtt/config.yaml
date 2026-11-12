@@ -21,7 +21,7 @@ map:
     path: /config
 options:
   radio_host: ""
-  radio_user: alex
+  radio_user: pi
   radio_port: 22
 schema:
   radio_host: str
