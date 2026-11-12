@@ -8,7 +8,6 @@ ControlSocket thread carries it over a Unix-domain socket.
 import os
 import socket
 import tempfile
-import threading
 import time
 
 import pytest

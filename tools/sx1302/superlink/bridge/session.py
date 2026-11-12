@@ -35,7 +35,7 @@ from ..adopt import (
 from ..crypto import generate_keypair, compute_shared_secret, derive_session_key
 from ..decoder import (
     build_frame, build_nonce, compute_mic, decrypt_frame,
-    format_mac, parse_frame, SuperLinkFrame,
+    format_mac, SuperLinkFrame,
 )
 from .core import OutgoingFrame
 from .events import DeviceStateEvent
@@ -910,7 +910,7 @@ class DeviceSession:
         - 0x40 discovery ads: respond with 0x62 ConnectionRsp (DH pubkey)
         - 0x42 ConnectionChallenge: extract pubkey, do DH, derive session key
         """
-        from ..hal import DL_FREQ_HZ, BW_500KHZ
+        from ..hal import DL_FREQ_HZ
         events: list = []
 
         if frame.dctrl in (0x40, 0x42) and now < self._backoff_until:

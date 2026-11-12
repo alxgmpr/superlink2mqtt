@@ -4,7 +4,7 @@ from superlink.gateway import GatewaySession, State
 from superlink.bridge.session import Adoption
 from superlink.decoder import compute_mic
 from tests.fixtures.captured_frames import (
-    DEFAULT_PAIRING_KEY, SENSOR_MAC, DL_CHANNELS_HZ, BEACON_FREQ_HZ,
+    DEFAULT_PAIRING_KEY, SENSOR_MAC, DL_CHANNELS_HZ,
 )
 
 
@@ -215,7 +215,6 @@ def test_handle_discovery_in_beaconing():
     #   [2:34]  = 32-byte gateway pubkey
     #   [34:37] = 0a 00 02
     #   [37:41] = 03 fe ff 03
-    header = tx_data[:10]
     encrypted = tx_data[10:]
     nonce = build_nonce(0xE0, 0x62, SENSOR_MAC,
                         tx_data[8], tx_data[9], counter=0)

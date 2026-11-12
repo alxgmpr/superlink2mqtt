@@ -289,7 +289,6 @@ def test_web_config_requires_private_token_and_valid_port(tmp_path, monkeypatch)
 
 
 def test_pairing_blocks_device_commands_until_persisted_adoption():
-    from superlink.bridge.events import DeviceStateEvent
     from tests.fixtures.captured_frames import DISCOVERY_FRAME_RAW
     rt = runtime()
     manager = Management(rt)

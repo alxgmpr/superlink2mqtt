@@ -1,8 +1,8 @@
-from superlink.bridge.core import BridgeCore, OutgoingFrame
+from superlink.bridge.core import BridgeCore
 from superlink.bridge.store import InMemoryDeviceStore, DeviceRecord
 from superlink.bridge.profiles import ProfileRegistry
 from superlink.bridge.events import (
-    DeviceDiscovered, DeviceStateEvent, PropertyEvent, AdoptDevice, Event,
+    DeviceDiscovered, PropertyEvent, AdoptDevice,
 )
 
 MAC = bytes.fromhex("9041B22E9A53")

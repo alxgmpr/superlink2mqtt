@@ -1,5 +1,4 @@
 """Tests for SuperLink frame encoding and decoding."""
-import pytest
 from superlink.decoder import (
     build_nonce, decrypt_frame, encrypt_payload, parse_frame,
 )

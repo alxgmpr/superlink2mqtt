@@ -3,7 +3,6 @@ from superlink.bridge.session import Adoption, DeviceSession
 from superlink.bridge.core import OutgoingFrame
 from superlink.bridge.store import DeviceRecord
 from superlink.bridge.profiles import ProfileRegistry
-from superlink.bridge.events import Event
 from tests.fixtures.captured_frames import (
     SENSOR_MAC, DEFAULT_PAIRING_KEY, FRAME_36B_RAW,
 )

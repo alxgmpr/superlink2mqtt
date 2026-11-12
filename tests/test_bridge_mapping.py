@@ -1,9 +1,8 @@
 import pytest
-from superlink import appmsg
 from superlink.bridge.profiles import ProfileRegistry
 from superlink.bridge.mapping import events_from_app_message, action_to_body
 from superlink.bridge.events import (
-    PropertyEvent, DeviceInfoEvent, RawMessageEvent,
+    PropertyEvent, RawMessageEvent,
     SetProperty, RequestProperty, Reboot, Ping,
 )
 

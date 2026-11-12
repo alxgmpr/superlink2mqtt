@@ -13,7 +13,7 @@ from typing import Callable
 
 from ..hal import BW_500KHZ
 from .config import RuntimeConfig
-from .core import BridgeCore, OutgoingFrame, InvalidCommand
+from .core import BridgeCore, InvalidCommand
 from .events import (
     Event, DeviceDiscovered, DeviceStateEvent, PropertyEvent, DeviceInfoEvent,
     AdoptDevice, SetPropertyRaw, DeviceRemoved,

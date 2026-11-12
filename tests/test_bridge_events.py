@@ -1,6 +1,6 @@
 # tests/test_bridge_events.py
 from superlink.bridge.events import (
-    Event, Action, DeviceDiscovered, PropertyEvent, DeviceStateEvent,
+    Event, Action, PropertyEvent, DeviceStateEvent,
     SetProperty, AdoptDevice, Ping, DEVICE_STATES,
 )
 

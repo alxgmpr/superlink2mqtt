@@ -1,7 +1,6 @@
 """Synthetic controller traffic and fake SSH only; never contacts bench devices."""
 import json
 import secrets
-from pathlib import Path
 import struct
 import subprocess
 import threading

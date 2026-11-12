@@ -77,7 +77,7 @@ def test_start_sets_lwt_and_online():
     bridge.start()
     assert client.lwt == ("superlink/bridge/availability", "offline", True)
     assert client.find("superlink/bridge/availability") == "online"
-    assert f"superlink/+/+/set" in client.subscriptions
+    assert "superlink/+/+/set" in client.subscriptions
     assert "superlink/adopt" in client.subscriptions
 
 

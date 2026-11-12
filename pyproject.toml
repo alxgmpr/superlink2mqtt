@@ -33,3 +33,16 @@ include = ["superlink*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["mqtt_broker: integration tests requiring a local mosquitto executable"]
+
+[tool.ruff]
+target-version = "py312"
+# Lint the bridge package, the HA app and the tests. The reverse-engineering
+# scripts (Ghidra/Jython, one-off crackers, capture tools) are not held to it.
+extend-exclude = [
+    "tools/decoder", "tools/ghidra_scripts", "tools/grant_crack", "tools/keyhook",
+    "tools/mock_controller", "tools/sdr", "tools/sensor_swd", "tools/sniffer",
+    "tools/sx1302/command_probe.py",
+]
+
+[tool.ruff.lint]
+select = ["E9", "F"]

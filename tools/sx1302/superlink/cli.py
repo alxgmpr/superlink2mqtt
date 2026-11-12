@@ -7,8 +7,6 @@ Ties together the HAL (hardware) and decoder (frame parsing) modules.
 
 import argparse
 import csv
-import io
-import os
 import select
 import sys
 import termios

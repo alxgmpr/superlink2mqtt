@@ -114,6 +114,13 @@ jobs:
         with:
           globs: "docs/**/*.md *.md"
 
+  python-lint:
+    name: Lint Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pipx run ruff==0.17.5 check .
+
   bridge-tests:
     name: Bridge tests (Python ${{ matrix.python }})
     runs-on: ubuntu-latest

@@ -12,7 +12,7 @@ from .entities import (
     PRESS_ENTITY, PRESS_ENTITY_NAME,
 )
 from .events import (
-    Event, PropertyEvent, DeviceInfoEvent, DeviceDiscovered, DeviceStateEvent,
+    Event, PropertyEvent, DeviceDiscovered, DeviceStateEvent,
     ButtonPressed, LinkSignal, SetProperty, SetPropertyRaw, AdoptDevice, Locate,
     Reboot, RequestDeviceInfo, FactoryReset, DeviceRemoved,
 )

@@ -1,6 +1,6 @@
 """Typed events (core -> consumer) and actions (consumer -> core)."""
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 DEVICE_STATES = ("discovered", "adopting", "adopted", "active", "lost")
 
