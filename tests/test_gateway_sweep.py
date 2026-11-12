@@ -1,5 +1,6 @@
 """Tests for PROPERTY_REQUEST sweep integration in the gateway."""
 from superlink.gateway import GatewaySession, State
+from superlink.bridge.session import Adoption
 from superlink.sweep import PropertySweep
 from superlink import appmsg
 from tests.fixtures.captured_frames import DEFAULT_PAIRING_KEY, SENSOR_MAC
@@ -85,7 +86,7 @@ def test_0x53_command_window_triggers_probe_tx():
     frame 62. Probes are NOT fired on 0x54 telemetry (fire-and-forget)."""
     from superlink.decoder import build_frame, compute_mic, parse_frame, decrypt_frame
     s = _active_session_with_sweep(PropertySweep(ids=[43]))
-    s._adopted = True  # command window only opens post-commit
+    s._adoption = Adoption.ADOPTED  # command window only opens post-commit
     s._ul_counter_offset = 0
     # 0x54 telemetry (PROPERTY_REPORT) must NOT elicit a property/device probe;
     # it may only elicit a PING keep-alive (mid 4).

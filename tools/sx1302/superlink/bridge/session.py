@@ -90,16 +90,21 @@ def initial_pairing_kdf_context(payload: bytes, pairing_key: bytes) -> bytes:
 class State(enum.Enum):
     IDLE = "idle"
     BEACONING = "beaconing"
-    WAIT_CONNREQ = "wait_connreq"
-    DH_EXCHANGE = "dh_exchange"
-    CHALLENGE = "challenge"
-    SETUP = "setup"
     ACTIVE = "active"
 
 
-# Internal State enum -> DEVICE_STATES vocabulary (new surface `state: str`).
-_ADOPTING_STATES = (State.BEACONING, State.WAIT_CONNREQ, State.DH_EXCHANGE,
-                    State.CHALLENGE, State.SETUP)
+class Adoption(enum.Enum):
+    """Adoption phase, orthogonal to the link `State`.
+
+    UNADOPTED      -> pairing-key transport, 0x53 polls get an ADOPT_REQUEST.
+    COMMIT_PENDING -> ADOPT round-trip produced (primary, fallback) keys but the
+                      sensor has not committed; keys are stashed, NOT rotated.
+    ADOPTED        -> commit observed (adopted-form 0x40); KDF context is the
+                      primary addDevice.key, handshake transport is fallbackKey.
+    """
+    UNADOPTED = "unadopted"
+    COMMIT_PENDING = "commit_pending"
+    ADOPTED = "adopted"
 
 
 class DeviceSession:
@@ -156,10 +161,13 @@ class DeviceSession:
         self.reconnect_backoff = reconnect_backoff
         self._lost_times: list[float] = []
         self._backoff_until = 0.0
-        # Latest `now` seen by _dispatch, so _handle_beaconing (no now arg) can
-        # check the backoff window.
-        self._now = 0.0
         self.mgmt_counter_start = mgmt_counter_start
+        # ADOPT_REQUEST messageTag; restarts at mgmt_counter_start on start()
+        # and on a watchdog re-arm.
+        self._mgmt_counter = mgmt_counter_start
+        # DL frames sent via _build_dl_reply (ADOPT_REQUEST): seq_hi = seq_lo =
+        # n, nonce counter = n - 1. Reset only by a watchdog re-arm.
+        self._post_pair_n = 0
         # Console networkId (4-byte BE trailer in ADOPT_REQUEST). Per-console;
         # any 32-bit value works as long as the same one is used for the life
         # of this session against this sensor.
@@ -182,11 +190,6 @@ class DeviceSession:
         # value advances. Volatile: the first report after (re)start just sets
         # the baseline, so a reconnect never phantom-fires.
         self._button_last: dict = {}
-        # Gateway per-packet RSSI/SNR for the frame currently being fed (set by
-        # feed(); None on the legacy path). Emitted as a LinkSignal on decoded
-        # telemetry so HA gets a real-dBm signal instead of the opaque id2.
-        self._rx_rssi: float | None = None
-        self._rx_snr: float | None = None
 
         # DH state (LoRa-side, between us and the sensor)
         self._privkey: bytes | None = None
@@ -215,11 +218,7 @@ class DeviceSession:
         self._last_beacon_time = 0.0
 
         # Adoption bookkeeping.
-        # _adopted: set once we OBSERVE the sensor commit (adopted-form 0x40
-        #   discovery `01ae94 8N 0000048f`); thereafter the KDF context is the
-        #   primary addDevice.key and the handshake transport key is fallbackKey.
-        # _adopt_pending: after the ADOPT round-trip produced (primary, fallback)
-        #   keys but BEFORE the sensor committed — we do NOT rotate yet.
+        # _adoption: the adoption phase (see Adoption).
         # _kdf_context: keypair+0x30 context fed into the session-key KDF.
         # _transport_key: outer XSalsa20 key for the 0x62/0x42 connect handshake.
         # _derived_addDevice_{key,fb_key}: persistent keys derived from ADOPT.
@@ -238,7 +237,8 @@ class DeviceSession:
             self._transport_key = (
                 record.transport_key if record.transport_key is not None
                 else pairing_key)
-            self._adopted = record.adopted
+            self._adoption = (Adoption.ADOPTED if record.adopted
+                              else Adoption.UNADOPTED)
             self._tx_seq_hi = record.tx_seq_hi
             self._tx_seq_lo = record.tx_seq_lo
             self._ul_counter_offset = record.ul_counter_offset
@@ -253,9 +253,7 @@ class DeviceSession:
                 kdf_context if kdf_context is not None else pairing_key)
             self._kdf_context_explicit = kdf_context is not None
             self._transport_key = pairing_key
-            self._adopted = False
-
-        self._adopt_pending = False
+            self._adoption = Adoption.UNADOPTED
 
     # ------------------------------------------------------------------ state
     @property
@@ -263,11 +261,13 @@ class DeviceSession:
         """New-surface state as a DEVICE_STATES string."""
         if self._adopted:
             return "adopted"
-        if self._state == State.ACTIVE:
-            return "active"
-        if self._state in _ADOPTING_STATES:
+        if self._state == State.BEACONING:
             return "adopting"
         return self._state.value
+
+    @property
+    def _adopted(self) -> bool:
+        return self._adoption is Adoption.ADOPTED
 
     @property
     def mac(self) -> bytes | None:
@@ -282,8 +282,7 @@ class DeviceSession:
         """Transition from IDLE to BEACONING."""
         self._privkey, self._pubkey = generate_keypair()
         self._state = State.BEACONING
-        if hasattr(self, "_mgmt_counter"):
-            del self._mgmt_counter
+        self._mgmt_counter = self.mgmt_counter_start
         self._last_beacon_time = now
         self._last_data_rx = now
         log.info("Session started, entering BEACONING state")
@@ -321,13 +320,16 @@ class DeviceSession:
         rssi/snr are the gateway's per-packet measurements (dBm / dB); when
         present, a decoded telemetry frame emits a LinkSignal event.
         """
-        self._rx_rssi = rssi
-        self._rx_snr = snr
-        _decoded, frames, events = self._dispatch(frame, channel, now)
+        if self._state is State.IDLE:
+            self.start(now)
+        _decoded, frames, events = self._dispatch(frame, channel, now,
+                                                  rssi, snr)
         return frames, events
 
     def tick(self, now: float) -> tuple[list[OutgoingFrame], list]:
         """Time-driven work (beacon emission)."""
+        if self._state is State.IDLE:
+            self.start(now)
         frames: list[OutgoingFrame] = []
         events: list = []
         if (self.beacon_enabled and self._state == State.BEACONING
@@ -407,10 +409,8 @@ class DeviceSession:
         self._backoff_until = 0.0
         # Drop mid-handshake ephemeral/counter state so the fresh handshake
         # starts clean (mirrors a from-record rebuild).
-        for attr in ("_mgmt_counter", "_post_pair_tx_seq_hi",
-                     "_post_pair_tx_seq_lo", "_post_pair_counter"):
-            if hasattr(self, attr):
-                delattr(self, attr)
+        self._mgmt_counter = self.mgmt_counter_start
+        self._post_pair_n = 0
 
     def to_record(self) -> DeviceRecord:
         """Snapshot the session's persistent state into a DeviceRecord."""
@@ -431,7 +431,8 @@ class DeviceSession:
         )
 
     # -------------------------------------------------------------- dispatch
-    def _dispatch(self, frame: SuperLinkFrame | None, channel: int, now: float
+    def _dispatch(self, frame: SuperLinkFrame | None, channel: int, now: float,
+                  rssi: float | None = None, snr: float | None = None
                   ) -> tuple[SuperLinkFrame | None, list[OutgoingFrame], list]:
         """Shared RX state-machine dispatch used by both surfaces.
 
@@ -442,7 +443,6 @@ class DeviceSession:
         if frame is None:
             return None, [], []
 
-        self._now = now
         # Link liveness is refreshed by DECODED telemetry only — see
         # _handle_active's data branch. Bumping on the raw 0x54/0x44 dctrl (before
         # decryption) let a drifted/dead session that still emits undecryptable
@@ -451,9 +451,9 @@ class DeviceSession:
         was_active = self._state == State.ACTIVE
 
         if self._state == State.ACTIVE:
-            result = self._handle_active(frame, channel)
+            result = self._handle_active(frame, channel, now, rssi, snr)
         elif self._state == State.BEACONING:
-            result = self._handle_beaconing(frame, channel)
+            result = self._handle_beaconing(frame, channel, now)
         else:
             log.debug("RX in %s state: dctrl=0x%02X from %s (no handler)",
                       self._state.value, frame.dctrl, format_mac(frame.mac))
@@ -539,7 +539,9 @@ class DeviceSession:
         """Called when the sensor's adoption commit is observed (base: no-op)."""
 
     # ------------------------------------------------------------ ACTIVE state
-    def _handle_active(self, frame: SuperLinkFrame, channel: int = 0
+    def _handle_active(self, frame: SuperLinkFrame, channel: int = 0,
+                       now: float = 0.0, rssi: float | None = None,
+                       snr: float | None = None
                        ) -> tuple[SuperLinkFrame | None, list[OutgoingFrame], list]:
         """Handle frames in ACTIVE state — decrypt UL, emit any DL response."""
         events: list = []
@@ -571,8 +573,7 @@ class DeviceSession:
                 log.info("factory-reset detected (unadopted 0x40 while adopted) "
                          "from %s — clearing adoption to re-pair",
                          format_mac(frame.mac))
-                self._adopted = False
-                self._adopt_pending = False
+                self._adoption = Adoption.UNADOPTED
                 self._derived_addDevice_key = None
                 self._derived_addDevice_fb_key = None
                 self._kdf_context = self.pairing_key
@@ -629,7 +630,7 @@ class DeviceSession:
                 or frame.mic != compute_mic(header, frame.payload)):
             return frame, [], events
         if frame.dctrl in (0x54, 0x44):
-            self._last_data_rx = self._now
+            self._last_data_rx = now
             self._short_challenge_count = 0
         # A decoded UL after our confirmed 0x74 is the sensor's ack of it.
         # ponytail: assumes the 0x74 landed; a lost one desyncs the DL counter
@@ -660,7 +661,7 @@ class DeviceSession:
         # then ACK with the real-bridge 0x63 commit ack.
         if (frame.payload and len(frame.payload) >= 66
                 and frame.payload[0] == MSG_ADOPT_RESPONSE
-                and 1 <= channel <= 8):
+                and 1 <= channel <= 8 and not self._adopted):
             try:
                 tag, dev_pub, dev_fb_pub = decode_adopt_response(
                     frame.payload[:66])
@@ -721,7 +722,7 @@ class DeviceSession:
             # own (primary, fallback) but has not committed. Drop to BEACONING
             # and wait to OBSERVE the commit before rotating. The keys stay
             # stashed; the swap happens in _handle_beaconing's 0x40 handler.
-            self._adopt_pending = True
+            self._adoption = Adoption.COMMIT_PENDING
             self._privkey, self._pubkey = generate_keypair()
             self._state = State.BEACONING
             log.info("ADOPT round-trip done; stashed primary=%s fallback=%s; "
@@ -741,8 +742,6 @@ class DeviceSession:
             if not _HAS_CRYPTO:
                 raise RuntimeError(
                     "pysodium required for ADOPT_REQUEST keypair generation")
-            if not hasattr(self, "_mgmt_counter"):
-                self._mgmt_counter = getattr(self, "mgmt_counter_start", 0x7c)
             mgmt = self._mgmt_counter & 0xFF
             self._mgmt_counter += 1
             # Fresh ephemeral keypair, stashed so the ADOPT_RESPONSE handler
@@ -769,11 +768,10 @@ class DeviceSession:
 
         # Gateway-measured link signal (real dBm/dB) for this decoded telemetry
         # frame. Only for data frames, and only when feed() supplied RSSI.
-        if self._rx_rssi is not None and frame.dctrl in (0x54, 0x44):
+        if rssi is not None and frame.dctrl in (0x54, 0x44):
             from .events import LinkSignal
-            events.append(LinkSignal(mac=frame.mac, rssi_dbm=self._rx_rssi,
-                                     snr=self._rx_snr if self._rx_snr is not None
-                                     else 0.0))
+            events.append(LinkSignal(mac=frame.mac, rssi_dbm=rssi,
+                                     snr=snr if snr is not None else 0.0))
 
         # Post-adoption: the sensor's 0x53 mgmt poll is its COMMAND WINDOW — the
         # only point it listens for and acts on a request. Drain a queued body.
@@ -809,12 +807,9 @@ class DeviceSession:
         counter) so consecutive DL frames stay in sequence for the sensor's
         nonce.
         """
-        self._post_pair_tx_seq_hi = getattr(self, "_post_pair_tx_seq_hi", 0) + 1
-        self._post_pair_tx_seq_lo = getattr(self, "_post_pair_tx_seq_lo", 0) + 1
-        self._post_pair_counter = getattr(self, "_post_pair_counter", -1) + 1
-        seq_hi = self._post_pair_tx_seq_hi & 0xFF
-        seq_lo = self._post_pair_tx_seq_lo & 0xFF
-        counter = self._post_pair_counter
+        self._post_pair_n += 1
+        seq_hi = seq_lo = self._post_pair_n & 0xFF
+        counter = self._post_pair_n - 1
         header = bytes([0xE0, dctrl]) + mac + bytes([seq_hi, seq_lo])
         mic = compute_mic(header, body)
         return build_frame(0xE0, dctrl, mac, seq_hi, seq_lo, mic, body,
@@ -906,7 +901,8 @@ class DeviceSession:
         return None
 
     # --------------------------------------------------------- BEACONING state
-    def _handle_beaconing(self, frame: SuperLinkFrame, channel: int = 0
+    def _handle_beaconing(self, frame: SuperLinkFrame, channel: int = 0,
+                          now: float = 0.0
                           ) -> tuple[SuperLinkFrame | None, list[OutgoingFrame], list]:
         """Handle frames in BEACONING state.
 
@@ -917,7 +913,7 @@ class DeviceSession:
         from ..hal import DL_FREQ_HZ, BW_500KHZ
         events: list = []
 
-        if frame.dctrl in (0x40, 0x42) and self._now < self._backoff_until:
+        if frame.dctrl in (0x40, 0x42) and now < self._backoff_until:
             # Both discovery and a directly retried challenge can reopen a
             # handshake; neither may bypass the reconnect-storm cooldown.
             return frame, [], events
@@ -951,13 +947,13 @@ class DeviceSession:
                 # context = primary addDevice.key, handshake transport key =
                 # fallbackKey (the reconnect 0x62/0x42 are encrypted with the
                 # fallbackKey, not the pairing key). Only now is rotation safe.
-                if (adopted_form and self._adopt_pending and not self._adopted
+                if (adopted_form
+                        and self._adoption is Adoption.COMMIT_PENDING
                         and self._derived_addDevice_key
                         and self._derived_addDevice_fb_key):
                     self._kdf_context = self._derived_addDevice_key
                     self._transport_key = self._derived_addDevice_fb_key
-                    self._adopted = True
-                    self._adopt_pending = False
+                    self._adoption = Adoption.ADOPTED
                     self._privkey, self._pubkey = generate_keypair()
                     log.info("*** COMMIT OBSERVED *** rotated: KDF ctx=%s "
                              "transport(fallbackKey)=%s",
@@ -1006,7 +1002,7 @@ class DeviceSession:
                             self._short_challenge_count,
                             self.watchdog_short_challenge_k,
                             " — answering resume with ConnRsp" if is_resume else "")
-                if is_resume and self._now >= self._backoff_until:
+                if is_resume and now >= self._backoff_until:
                     of = self._build_connrsp(frame.mac, channel)
                     if of is not None:
                         return frame, [of], events

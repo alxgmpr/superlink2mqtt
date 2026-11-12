@@ -1,6 +1,7 @@
 """Tests for the gateway connection state machine."""
 import pytest
 from superlink.gateway import GatewaySession, State
+from superlink.bridge.session import Adoption
 from superlink.decoder import compute_mic
 from tests.fixtures.captured_frames import (
     DEFAULT_PAIRING_KEY, SENSOR_MAC, DL_CHANNELS_HZ, BEACON_FREQ_HZ,
@@ -508,7 +509,7 @@ def test_adopt_response_defers_rotation_until_commit_observed():
     # Keys derived + stashed, but NOT yet rotated in.
     assert session._derived_addDevice_key == expected_key
     assert session._derived_addDevice_fb_key == expected_fb
-    assert session._adopt_pending is True
+    assert session._adoption is Adoption.COMMIT_PENDING
     assert session._adopted is False
     assert session._kdf_context == default_ctx           # unchanged
     assert session._transport_key == DEFAULT_PAIRING_KEY  # unchanged
@@ -526,9 +527,34 @@ def test_adopt_response_defers_rotation_until_commit_observed():
 
     # Rotation happens on the observed commit.
     assert session._adopted is True
-    assert session._adopt_pending is False
+    assert session._adoption is not Adoption.COMMIT_PENDING
     assert session._kdf_context == expected_key                 # primary
     assert session._transport_key == expected_fb                # fallbackKey
+
+
+def test_adopt_response_ignored_once_adopted():
+    """An ADOPTED session must not re-enter the adoption flow: a stray
+    ADOPT_RESPONSE (with leftover ephemerals from an abandoned ADOPT_REQUEST)
+    used to overwrite the stored addDevice keys and drop the link."""
+    from superlink.adopt import MSG_ADOPT_RESPONSE
+    from superlink.decoder import build_frame
+
+    session = _active_session_for_adopt()
+    session._adoption = Adoption.ADOPTED
+    session._derived_addDevice_key = primary = bytes(range(32))
+    session._eph_priv_r = session._eph_priv_o = bytes(range(1, 33))
+    body = bytes([MSG_ADOPT_RESPONSE, 0x9C]) + bytes.fromhex(
+        "8f0f12de419e0d8db5d7abd8aab7a6b5037c0be13c984bc8c93ae75c1438a120"
+        "ef9a96027a8b842113c6f75d7f3f6107a531275b359a2dd107478dfaac0eac06")
+    mic = compute_mic(b"\xe0\x54" + SENSOR_MAC + b"\x01\x00", body)
+    raw = build_frame(0xE0, 0x54, SENSOR_MAC, 0x01, 0x00,
+                      mic, body, session.session_key, counter=1)
+
+    session.handle_rx(raw, ul_channel=1)
+
+    assert session._adoption is Adoption.ADOPTED
+    assert session._derived_addDevice_key == primary
+    assert session.state == State.ACTIVE
 
 
 def test_unadopted_form_0x40_does_not_rotate():
@@ -561,7 +587,7 @@ def test_unadopted_form_0x40_does_not_rotate():
     session.handle_rx(raw40, ul_channel=1)
 
     assert session._adopted is False
-    assert session._adopt_pending is True
+    assert session._adoption is Adoption.COMMIT_PENDING
     assert session._kdf_context == default_ctx
     assert session._transport_key == DEFAULT_PAIRING_KEY
 

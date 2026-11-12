@@ -17,7 +17,7 @@ from .decoder import format_mac, parse_frame, SuperLinkFrame
 from .bridge.core import BridgeCore, OutgoingFrame
 from .bridge.observers import SweepObserver
 from .bridge.profiles import ProfileRegistry
-from .bridge.session import DeviceSession, State
+from .bridge.session import Adoption, DeviceSession, State
 from .bridge.store import JsonDeviceStore
 
 # Factory-default LoRa pairing key (docs/protocol/crypto_and_pairing.md).
@@ -267,7 +267,7 @@ class GatewaySession(DeviceSession):
             self._derived_addDevice_fb_key = bytes.fromhex(d["fallback"])
             self._kdf_context = self._derived_addDevice_key
             self._transport_key = self._derived_addDevice_fb_key
-            self._adopted = True
+            self._adoption = Adoption.ADOPTED
             if d.get("mac"):
                 self.sensor_mac = bytes.fromhex(d["mac"])
             log.info("RECONNECT: loaded addDevice keys (primary=%s "

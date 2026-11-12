@@ -1,5 +1,5 @@
 """Tests for the extracted DeviceSession (new bridge surface)."""
-from superlink.bridge.session import DeviceSession
+from superlink.bridge.session import Adoption, DeviceSession
 from superlink.bridge.core import OutgoingFrame
 from superlink.bridge.store import DeviceRecord
 from superlink.bridge.profiles import ProfileRegistry
@@ -175,8 +175,7 @@ def test_commit_observed_emits_adopted_state_event():
     s.start(now=0.0)
     # Stage a pending-commit: ADOPT round-trip done, keys stashed, awaiting the
     # adopted-form 0x40 that signals the sensor committed.
-    s._adopt_pending = True
-    s._adopted = False
+    s._adoption = Adoption.COMMIT_PENDING
     s._derived_addDevice_key = bytes(range(32))
     s._derived_addDevice_fb_key = bytes(range(32, 64))
 
@@ -213,7 +212,7 @@ def _active_data_session(link_lost_timeout=60.0):
     s._state = State.ACTIVE
     s.session_key = bytes(range(32))
     s.sensor_mac = SENSOR_MAC
-    s._adopted = True
+    s._adoption = Adoption.ADOPTED
     s._last_data_rx = 0.0
     return s
 
@@ -262,7 +261,7 @@ def test_queued_command_pushed_on_telemetry_window():
     # after a UL frame, not gated on the sensor's rare 0x53 reconnect poll. A
     # queued body must go out on a telemetry (0x54) window too.
     s = _active_data_session()
-    s._adopted = True
+    s._adoption = Adoption.ADOPTED
     s.queue_body(b"\x0e\x01\x10\x00\x01")               # PROPERTY_SET ENTRY_CONFIG=1
     frames, _ = s.feed(_craft_data_frame(s.session_key), channel=3, now=6.0)
     assert any(isinstance(f, OutgoingFrame) for f in frames), \
@@ -312,7 +311,7 @@ def test_no_link_signal_without_rssi():
 def test_no_command_pushed_without_queue():
     # No queued body -> a telemetry frame must NOT emit a spurious DL command.
     s = _active_data_session()
-    s._adopted = True
+    s._adoption = Adoption.ADOPTED
     frames, _ = s.feed(_craft_data_frame(s.session_key), channel=3, now=6.0)
     # Only lorabrd's bare MAC ACK (0x63) for the confirmed 0x54, no 0x74.
     assert [f.data[1] for f in frames] == [0x63]
@@ -445,7 +444,7 @@ def _stuck_beaconing_session(watchdog_timeout=150.0, watchdog_short_challenge_k=
     s._state = State.BEACONING
     s.session_key = None
     s.sensor_mac = SENSOR_MAC
-    s._adopted = True
+    s._adoption = Adoption.ADOPTED
     s._last_data_rx = 0.0
     return s
 
@@ -565,7 +564,7 @@ def test_device_info_report_populates_prop_sizes():
     PROPERTY_REPORT/SET frames decode against the correct fixed sizes instead of
     falling back to opaque 'grab the rest' parsing."""
     s = _session()
-    s._adopted = True                          # _observe only runs when adopted
+    s._adoption = Adoption.ADOPTED     # _observe only runs when adopted
     s._observe(_frame_with_payload(
         _device_info_body([(13, 1, 2), (3, 1, 1)])), channel=1)
     assert s._prop_sizes == {13: 2, 3: 1}
@@ -578,7 +577,7 @@ def test_property_report_decodes_with_learned_sizes():
     buffer and only one property would surface."""
     from superlink.bridge.events import PropertyEvent
     s = _session()
-    s._adopted = True
+    s._adoption = Adoption.ADOPTED
     s._observe(_frame_with_payload(
         _device_info_body([(13, 1, 2), (3, 1, 1)])), channel=1)
 

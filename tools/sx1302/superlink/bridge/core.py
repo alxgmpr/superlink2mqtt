@@ -26,7 +26,6 @@ class OutgoingFrame:
 class SessionProtocol(Protocol):
     mac: bytes
     state: str
-    def start(self, now: float) -> None: ...
     def feed(self, frame, channel: int, now: float,
              rssi: float | None = ..., snr: float | None = ...): ...
     def tick(self, now: float): ...
@@ -46,12 +45,6 @@ class BridgeCore:
         self._factory = session_factory
         self.auto_adopt = auto_adopt
         self._sessions: dict[bytes, SessionProtocol] = {}
-        # MACs whose session has already been start()ed. Core-owned sessions are
-        # created IDLE (no keypair); they must be started — entering BEACONING
-        # and generating a keypair — before a frame is dispatched or they are
-        # ticked, or their state machine does nothing. Lazy-started on first
-        # feed/tick since `now` is not available at construction/submit time.
-        self._started: set[bytes] = set()
         self._discovered: dict[bytes, float] = {}
         self._subscribers: list[Callable[[Event], None]] = []
         # Running command messageTag. The sensor REJECTS tag 0 (a tag-0
@@ -87,19 +80,6 @@ class BridgeCore:
             for cb in self._subscribers:
                 cb(ev)
 
-    def _ensure_started(self, mac: bytes, session: SessionProtocol,
-                        now: float) -> None:
-        """Start a core-owned session exactly once (idempotent).
-
-        Freshly built / store-restored sessions are IDLE with no keypair;
-        start() moves them to BEACONING and generates the DH keypair. Guarded
-        by `_started` so a session is never started twice — its keys are never
-        regenerated and an already-ACTIVE/BEACONING session is never reset.
-        """
-        if mac not in self._started:
-            self._started.add(mac)
-            session.start(now)
-
     def feed(self, raw: bytes, channel: int, now: float,
              rssi: float | None = None, snr: float | None = None
              ) -> list[OutgoingFrame]:
@@ -109,7 +89,6 @@ class BridgeCore:
         mac = frame.mac
         session = self._sessions.get(mac)
         if session is not None:
-            self._ensure_started(mac, session, now)
             frames, events = session.feed(frame, channel, now, rssi=rssi, snr=snr)
             # _emit before _intercept: subscribers must see the CommandStatus
             # (and any event sharing its batch, e.g. a LinkSignal) before the
@@ -128,7 +107,6 @@ class BridgeCore:
         if self.auto_adopt:
             self._adopt(mac)
             session = self._sessions[mac]
-            self._ensure_started(mac, session, now)
             frames, events = session.feed(frame, channel, now, rssi=rssi, snr=snr)
             self._emit(events)
             return list(frames)
@@ -164,9 +142,8 @@ class BridgeCore:
             self._remove_device(ev.mac, "factory_reset")
 
     def _remove_device(self, mac: bytes, reason: str) -> None:
-        """Forget a device entirely: session, start-state, and stored record."""
+        """Forget a device entirely: session and stored record."""
         self._sessions.pop(mac, None)
-        self._started.discard(mac)
         self._discovered.pop(mac, None)
         self._pending_reset.pop(mac, None)
         self.store.delete(mac)
@@ -176,7 +153,6 @@ class BridgeCore:
     def tick(self, now: float) -> list[OutgoingFrame]:
         out: list[OutgoingFrame] = []
         for mac, session in list(self._sessions.items()):
-            self._ensure_started(mac, session, now)
             frames, events = session.tick(now)
             out.extend(frames)
             self._emit(events)

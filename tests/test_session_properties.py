@@ -8,7 +8,7 @@ from hypothesis.stateful import RuleBasedStateMachine, invariant, precondition, 
 
 from superlink.adopt import KDF_SALT_H
 from superlink.bridge.events import DeviceStateEvent
-from superlink.bridge.session import DeviceSession, State, LORA_DEVICE_DEFAULT_ADOPTION_KEY
+from superlink.bridge.session import Adoption, DeviceSession, State, LORA_DEVICE_DEFAULT_ADOPTION_KEY
 from superlink.bridge.store import DeviceRecord
 from superlink.decoder import parse_frame
 from tests.fixtures.captured_frames import DEFAULT_PAIRING_KEY, SENSOR_MAC
@@ -248,7 +248,7 @@ def test_invalid_adoption_key_does_not_partially_replace_persistent_keys(
     retry = bytes([3, request[1]]) + public + public
     frames, _ = feed(session, wire(retry, dctrl=0x54, key=key), 104, channel)
     assert len(frames) == 1 and frames[0].data[1] == 0x63
-    assert session._state == State.BEACONING and session._adopt_pending
+    assert session._state == State.BEACONING and session._adoption is Adoption.COMMIT_PENDING
     assert session._eph_priv_r is None and session._eph_priv_o is None
 
 

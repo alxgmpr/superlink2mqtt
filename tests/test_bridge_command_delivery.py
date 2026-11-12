@@ -11,7 +11,7 @@ import pytest
 
 from superlink import appmsg
 from superlink.bridge.core import OutgoingFrame
-from superlink.bridge.session import DeviceSession, State
+from superlink.bridge.session import Adoption, DeviceSession, State
 from superlink.bridge.store import DeviceRecord
 from superlink.bridge.profiles import ProfileRegistry
 from superlink.decoder import build_frame, compute_mic, parse_frame, decrypt_frame
@@ -29,7 +29,7 @@ def _active_adopted_session():
     s._state = State.ACTIVE
     s.session_key = SESSION_KEY
     s.sensor_mac = SENSOR_MAC
-    s._adopted = True
+    s._adoption = Adoption.ADOPTED
     s._ul_counter_offset = 0
     return s
 
@@ -114,7 +114,7 @@ def test_command_not_delivered_before_adoption():
     """Pre-adoption, a 0x53 poll is answered with the ADOPT_REQUEST, not a
     queued app command — the command window only opens once adopted."""
     s = _active_adopted_session()
-    s._adopted = False               # not yet committed
+    s._adoption = Adoption.UNADOPTED               # not yet committed
     s.queue_body(appmsg.encode_locate(0x35))
     (frames, _), _ = _feed_0x53(s)
     # It replies (ADOPT_REQUEST), but the queued LOCATE stays pending.
