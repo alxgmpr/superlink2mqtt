@@ -4,12 +4,7 @@ Ubiquiti SuperLink sensors → MQTT → Home Assistant, with no UniFi controller
 
 SuperLink is Ubiquiti's proprietary LoRa-based sub-GHz sensor protocol. This project is an open gateway for it: a Raspberry Pi with an SX1302 LoRa concentrator pairs with the sensors directly over the air, decrypts their traffic, and publishes it to MQTT with Home Assistant discovery. Sensors show up in Home Assistant as normal MQTT devices.
 
-<img width="1028" height="781" alt="superlink2mqtt management UI" src="https://github.com/user-attachments/assets/e16ffbb9-7369-461f-b2e1-0df24a7cf506" />
-
-```text
-SuperLink sensors ⇄ Pi + SX1302 ⇄ superlink2mqtt → MQTT broker → Home Assistant
-                                        └ web UI (pairing, status, commands)
-```
+![How superlink2mqtt works](docs/architecture.svg)
 
 ## What you get
 

@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 458" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="t">How superlink2mqtt works</title>
+  <desc id="d">SuperLink sensors talk encrypted LoRa to a Raspberry Pi with an SX1302 concentrator. superlink2mqtt pairs, decrypts and decodes, then publishes to an MQTT broker that Home Assistant reads. The bridge runs either on the Pi or as a Home Assistant app that reaches the Pi radio over SSH.</desc>
+  <style>
+    .bg     { fill: #ffffff; }
+    .box    { fill: #f6f8fa; stroke: #d0d7de; }
+    .hero   { fill: #ddf4ff; stroke: #0969da; }
+    .panel  { fill: none; stroke: #d0d7de; stroke-dasharray: 4 4; }
+    .t      { fill: #1f2328; font-size: 14px; font-weight: 600; }
+    .s      { fill: #59636e; font-size: 12px; }
+    .l      { fill: #59636e; font-size: 11px; }
+    .a      { fill: #0969da; font-size: 12px; font-weight: 600; }
+    .wire   { stroke: #59636e; stroke-width: 1.5; fill: none; }
+    .head   { fill: #59636e; }
+    text    { text-anchor: middle; }
+    .left   { text-anchor: start; }
+    @media (prefers-color-scheme: dark) {
+      .bg    { fill: #0d1117; }
+      .box   { fill: #161b22; stroke: #30363d; }
+      .hero  { fill: #121d2f; stroke: #4493f8; }
+      .panel { stroke: #30363d; }
+      .t     { fill: #e6edf3; }
+      .s, .l { fill: #9198a1; }
+      .a     { fill: #4493f8; }
+      .wire  { stroke: #9198a1; }
+      .head  { fill: #9198a1; }
+    }
+  </style>
+  <defs>
+    <marker id="e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M0 0 10 5 0 10z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="960" height="458" rx="12"/>
+
+  <!-- Data path -->
+  <rect class="box" x="20" y="30" width="150" height="116" rx="8"/>
+  <text class="t" x="95" y="62">SuperLink sensors</text>
+  <text class="s" x="95" y="86">door · motion · leak</text>
+  <text class="s" x="95" y="104">battery powered</text>
+
+  <rect class="box" x="210" y="30" width="150" height="116" rx="8"/>
+  <text class="t" x="285" y="62">Raspberry Pi</text>
+  <text class="s" x="285" y="86">SX1302 LoRa</text>
+  <text class="s" x="285" y="104">concentrator</text>
+
+  <rect class="hero" x="400" y="30" width="190" height="116" rx="8"/>
+  <text class="t" x="495" y="62">superlink2mqtt</text>
+  <text class="s" x="495" y="86">pairs sensors, stores keys</text>
+  <text class="s" x="495" y="104">decrypts + decodes frames</text>
+  <text class="s" x="495" y="122">web UI</text>
+
+  <rect class="box" x="630" y="30" width="120" height="116" rx="8"/>
+  <text class="t" x="690" y="62">MQTT broker</text>
+  <text class="s" x="690" y="86">e.g. Mosquitto</text>
+
+  <rect class="box" x="790" y="30" width="150" height="116" rx="8"/>
+  <text class="t" x="865" y="62">Home Assistant</text>
+  <text class="s" x="865" y="86">auto-discovered</text>
+  <text class="s" x="865" y="104">devices + entities</text>
+
+  <path class="wire" d="M175 88H205" marker-start="url(#e)" marker-end="url(#e)"/>
+  <path class="wire" d="M365 88H395" marker-start="url(#e)" marker-end="url(#e)"/>
+  <path class="wire" d="M595 88H625" marker-start="url(#e)" marker-end="url(#e)"/>
+  <path class="wire" d="M755 88H785" marker-start="url(#e)" marker-end="url(#e)"/>
+
+  <text class="l" x="190" y="168">LoRa 915 MHz</text>
+  <text class="l" x="190" y="182">encrypted</text>
+  <text class="l" x="380" y="168">SPI or SSH</text>
+  <text class="l" x="610" y="168">state + commands</text>
+  <text class="l" x="770" y="168">MQTT discovery</text>
+
+  <!-- Deployment options -->
+  <text class="t left" x="20" y="226">Where the bridge runs</text>
+
+  <rect class="panel" x="20" y="240" width="450" height="198" rx="10"/>
+  <text class="t left" x="36" y="266">Option A — everything on the Pi</text>
+  <rect class="box" x="36" y="282" width="170" height="136" rx="8"/>
+  <text class="t" x="121" y="310">Raspberry Pi</text>
+  <text class="s" x="121" y="334">SX1302 radio</text>
+  <text class="a" x="121" y="354">superlink2mqtt</text>
+  <rect class="box" x="284" y="282" width="170" height="136" rx="8"/>
+  <text class="t" x="369" y="310">Home Assistant host</text>
+  <text class="s" x="369" y="334">MQTT broker</text>
+  <text class="s" x="369" y="354">Home Assistant</text>
+  <path class="wire" d="M211 350H279" marker-start="url(#e)" marker-end="url(#e)"/>
+  <text class="l" x="245" y="340">MQTT</text>
+  <text class="l" x="245" y="368">over LAN</text>
+
+  <rect class="panel" x="490" y="240" width="450" height="198" rx="10"/>
+  <text class="t left" x="506" y="266">Option B — Home Assistant app</text>
+  <rect class="box" x="506" y="282" width="170" height="136" rx="8"/>
+  <text class="t" x="591" y="310">Raspberry Pi</text>
+  <text class="s" x="591" y="334">SX1302 radio</text>
+  <text class="s" x="591" y="354">radio server only</text>
+  <rect class="box" x="754" y="282" width="170" height="136" rx="8"/>
+  <text class="t" x="839" y="310">Home Assistant host</text>
+  <text class="a" x="839" y="334">superlink2mqtt app</text>
+  <text class="s" x="839" y="354">MQTT broker</text>
+  <text class="s" x="839" y="374">Home Assistant</text>
+  <path class="wire" d="M681 350H749" marker-start="url(#e)" marker-end="url(#e)"/>
+  <text class="l" x="715" y="340">SSH</text>
+  <text class="l" x="715" y="368">key-locked</text>
+</svg>
