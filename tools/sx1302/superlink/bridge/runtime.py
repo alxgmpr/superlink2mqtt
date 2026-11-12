@@ -226,7 +226,10 @@ class BridgeRuntime:
         self.hal.stop()
         self.radio_state = "disconnected"
         # Exception text can contain paths or credentials supplied by a peer.
-        self.radio_error = f"Radio unavailable ({type(error).__name__}). Check Pi power, network, SSH host key and radio service."
+        hint = ("Check that lora_pkt_fwd is running and its server_address and ports point at this host."
+                if getattr(self.config.radio, "backend", None) == "sx1302-gwmp"
+                else "Check Pi power, network, SSH host key and radio service.")
+        self.radio_error = f"Radio unavailable ({type(error).__name__}). {hint}"
         log.warning("%s Retrying in %.0fs", self.radio_error, self._radio_retry_delay)
         self._radio_retry_at = now + self._radio_retry_delay
         self._radio_retry_delay = min(30.0, self._radio_retry_delay * 2)
@@ -367,7 +370,10 @@ def main(argv=None):
         return
     config = RuntimeConfig.load(args.config)
     logging.basicConfig(level=getattr(logging, config.log_level, logging.INFO))
-    if config.radio is not None:
+    if getattr(config.radio, "backend", None) == "sx1302-gwmp":
+        from ..radio_gwmp import GwmpSX1302
+        hal = GwmpSX1302(config.radio)
+    elif config.radio is not None:
         from ..radio_remote import RemoteSX1302
         hal = RemoteSX1302(config.radio)
     else:
