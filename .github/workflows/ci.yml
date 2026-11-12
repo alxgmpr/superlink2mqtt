@@ -129,7 +129,16 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsodium-dev mosquitto
+        run: |
+          sudo apt-get update && sudo apt-get install -y libsodium-dev mosquitto
+          # Ubuntu 26.04 confines /usr/sbin/mosquitto with AppArmor, so the
+          # tests' private broker cannot read its config under /tmp. Unload
+          # the profile on this throwaway runner; no-op where none exists.
+          for profile in /etc/apparmor.d/*mosquitto*; do
+            [ -e "$profile" ] || continue
+            echo "Unloading AppArmor profile $profile"
+            sudo apparmor_parser -R "$profile"
+          done
       - name: Install bridge and test dependencies
         run: python -m pip install '.[test]'
       - name: Test
