@@ -45,7 +45,9 @@ class Broker:
         self.process = subprocess.Popen([self.executable, '-c', str(self.config)],
                                         stdout=self.log, stderr=subprocess.STDOUT)
         def listening():
-            assert self.process.poll() is None, 'private broker exited unexpectedly'
+            assert self.process.poll() is None, (
+                'private broker exited unexpectedly: '
+                + (self.config.parent / 'mosquitto.log').read_text()[-2000:])
             try:
                 with socket.create_connection(('127.0.0.1', self.port), timeout=0.1):
                     return True
