@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 if TYPE_CHECKING:
+    from ..radio_gwmp import GwmpRadioConfig
     from ..radio_remote import RemoteRadioConfig
 
 # Documented Ubiquiti factory-default pairing key (docs/protocol/crypto_and_pairing.md).
@@ -60,7 +61,7 @@ class RuntimeConfig:
     mqtt: "MqttConfig | None" = None
     control_socket: str | None = None
     web: WebConfig | None = None
-    radio: RemoteRadioConfig | None = None
+    radio: RemoteRadioConfig | GwmpRadioConfig | None = None
     hal_library: str = field(default_factory=lambda: os.path.expanduser(
         "~/sx1302_hal/libloragw/libloragw.so"))
     spi_path: str = "/dev/spidev0.0"
@@ -113,9 +114,16 @@ class RuntimeConfig:
                             port=web_doc.get("port", 8099),
                             ingress=web_doc.get("ingress", False))
         radio = None
-        if doc.get("radio") is not None:
+        radio_doc = doc.get("radio")
+        if isinstance(radio_doc, dict) and "gwmp" in radio_doc:
+            # Opt-in Semtech UDP packet-forwarder backend (docs/GWMP_BACKEND.md).
+            if len(radio_doc) != 1:
+                raise ValueError("radio.gwmp cannot be combined with SSH radio settings")
+            from ..radio_gwmp import GwmpRadioConfig
+            radio = GwmpRadioConfig(**(radio_doc["gwmp"] or {}))
+        elif radio_doc is not None:
             from ..radio_remote import RemoteRadioConfig
-            radio = RemoteRadioConfig(**doc["radio"])
+            radio = RemoteRadioConfig(**radio_doc)
         mqtt = None
         if mqtt_doc is not None:
             if "host" not in mqtt_doc:

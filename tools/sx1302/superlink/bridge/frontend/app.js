@@ -282,7 +282,7 @@ function renderActivity() {
 }
 
 function renderGateway() {
-  const backend = state.demo ? "SX1302 (demo)" : state.backend === "sx1302-ssh" ? "SX1302 over SSH" : "SX1302";
+  const backend = state.demo ? "SX1302 (demo)" : state.backend === "sx1302-ssh" ? "SX1302 over SSH" : state.backend === "sx1302-gwmp" ? "SX1302 via UDP packet forwarder" : "SX1302";
   $("gateway").replaceChildren(
     ...[
       ["Radio backend", backend],

@@ -69,7 +69,8 @@ class Management:
         return {"demo": self.runtime.demo,
                 "radio": {"state": self.runtime.radio_state,
                           "error": self.runtime.radio_error},
-                "backend": "sx1302-ssh" if self.runtime.config.radio else "sx1302",
+                "backend": (getattr(self.runtime.config.radio, "backend", "sx1302-ssh")
+                            if self.runtime.config.radio else "sx1302"),
                 "gateway_mac": self.runtime.config.gw_mac.hex(),
                 "mqtt": "connected" if mqtt and mqtt.client.is_connected() else
                         ("disconnected" if self.runtime.config.mqtt else "disabled"),

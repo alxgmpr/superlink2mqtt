@@ -367,7 +367,10 @@ def main(argv=None):
         return
     config = RuntimeConfig.load(args.config)
     logging.basicConfig(level=getattr(logging, config.log_level, logging.INFO))
-    if config.radio is not None:
+    if getattr(config.radio, "backend", None) == "sx1302-gwmp":
+        from ..radio_gwmp import GwmpSX1302
+        hal = GwmpSX1302(config.radio)
+    elif config.radio is not None:
         from ..radio_remote import RemoteSX1302
         hal = RemoteSX1302(config.radio)
     else:
