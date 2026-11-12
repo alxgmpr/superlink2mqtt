@@ -3,6 +3,7 @@ import base64
 import json
 import socket
 import threading
+import time
 
 import pytest
 
@@ -45,11 +46,31 @@ class Forwarder:
         return thread, seen
 
 
+def connect(radio, token=b"\x00\x07"):
+    """Run start() while a fake forwarder supplies the PULL_DATA it waits for."""
+    errors = []
+    def run():
+        try:
+            radio.start()
+        except Exception as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=run)
+    thread.start()
+    while radio.sock is None and thread.is_alive():
+        time.sleep(0.001)
+    forwarder = Forwarder(radio.sock.getsockname()[1])
+    forwarder.pull(token)
+    assert forwarder.recv() == b"\x02" + token + b"\x04"
+    thread.join(2)
+    assert not thread.is_alive() and not errors
+    return forwarder
+
+
 @pytest.fixture
 def link():
-    radio = GwmpSX1302(GwmpRadioConfig(bind="127.0.0.1", port=0, tx_ack_timeout=1))
-    radio.start()
-    forwarder = Forwarder(radio.sock.getsockname()[1])
+    radio = GwmpSX1302(GwmpRadioConfig(bind="127.0.0.1", port=0, tx_ack_timeout=1,
+                                       forwarder_timeout=5))
+    forwarder = connect(radio)
     yield radio, forwarder
     radio.stop()
     forwarder.sock.close()
@@ -99,43 +120,122 @@ def test_rxpk_becomes_rxpacket_and_push_data_is_acked(link):
 
 def test_malformed_uplinks_are_acked_and_dropped(link):
     radio, forwarder = link
-    forwarder.sock.sendto(b"\x02", forwarder.server)                      # runt
+    forwarder.sock.sendto(b"\x02\x00\x00\x00", forwarder.server)          # runt
     forwarder.sock.sendto(b"\x01\x00\x00\x00" + EUI + b"{}", forwarder.server)  # v1
     forwarder.push(b"\x00\x01", {"stat": {"rxnb": 0}})                    # stat only
     assert poll(radio, forwarder) == ([], b"\x02\x00\x01\x01")
     forwarder.sock.sendto(b"\x02\x00\x02\x00" + EUI + b"not json", forwarder.server)
     assert poll(radio, forwarder) == ([], b"\x02\x00\x02\x01")
-    forwarder.push(b"\x00\x03", {"rxpk": [
+    forwarder.sock.sendto(b"\x02\x00\x04\x00" + EUI + b"[" * 8000, forwarder.server)
+    assert poll(radio, forwarder) == ([], b"\x02\x00\x04\x01")
+    body = json.dumps({"rxpk": [
         rxpk(data="!!!"), rxpk(datr=50000), rxpk(datr="SF5BW999"), {"tmst": 1},
-        "junk", rxpk(data="AQ=="),
+        "junk", rxpk(freq=1e999), rxpk(tmst=1e999), rxpk(data="AQ=="),
     ]})
+    assert "Infinity" in body
+    forwarder.sock.sendto(b"\x02\x00\x03\x00" + EUI + body.encode(), forwarder.server)
     packets, _ = poll(radio, forwarder)
     assert [p.payload for p in packets] == [b"\x01"]
 
 
-def test_send_before_any_pull_data_is_refused(link):
+def test_before_any_pull_data_nothing_is_received_or_sent():
+    radio = GwmpSX1302(GwmpRadioConfig(bind="127.0.0.1", port=0))
+    radio._bind()
+    forwarder = Forwarder(radio.sock.getsockname()[1])
+    try:
+        forwarder.push(b"\x00\x01", {"rxpk": [rxpk()]})   # uplinks alone give no route
+        forwarder.tx_ack(b"\x00\x01")
+        time.sleep(0.05)
+        radio._pump()
+        assert radio._pending == [] and radio.forwarder is None
+        with pytest.raises(RuntimeError, match="PULL_DATA"):
+            radio.send(920400000, b"\x01", tx_timestamp_us=1000000)
+        forwarder.sock.settimeout(0.05)
+        with pytest.raises(TimeoutError):
+            forwarder.recv()
+        assert "no forwarder" in radio.version()
+    finally:
+        radio.stop()
+        forwarder.sock.close()
+
+
+def test_start_fails_until_a_forwarder_sends_pull_data():
+    radio = GwmpSX1302(GwmpRadioConfig(bind="127.0.0.1", port=0, forwarder_timeout=0.1))
+    with pytest.raises(ConnectionError, match="PULL_DATA"):
+        radio.start()
+    assert radio.sock is None
+
+
+def test_silent_forwarder_is_a_connection_error():
+    radio = GwmpSX1302(GwmpRadioConfig(bind="127.0.0.1", port=0, forwarder_timeout=1.0))
+    forwarder = connect(radio)
+    try:
+        assert radio.receive() == []
+        time.sleep(0.6)
+        forwarder.pull()                       # a keepalive extends the deadline
+        time.sleep(0.6)
+        assert radio.receive() == []
+        time.sleep(1.1)
+        with pytest.raises(ConnectionError, match="stopped"):
+            radio.receive()
+    finally:
+        radio.stop()
+        forwarder.sock.close()
+
+
+def test_restarted_forwarder_takes_the_route_and_forces_a_reconnect(link):
     radio, forwarder = link
-    forwarder.push(b"\x00\x01", {"rxpk": [rxpk()]})   # uplinks alone give no TX route
-    poll(radio, forwarder)
-    with pytest.raises(RuntimeError, match="PULL_DATA"):
-        radio.send(920400000, b"\x01", tx_timestamp_us=1000000)
+    restarted = Forwarder(forwarder.server[1])        # same host, new source port
+    restarted.pull(b"\x00\x09")
+    with pytest.raises(ConnectionError, match="restarted"):
+        for _ in range(200):
+            radio.receive()
+            time.sleep(0.005)
+    assert restarted.recv() == b"\x02\x00\x09\x04"
+    assert radio.forwarder == restarted.sock.getsockname()
+    restarted.sock.close()
+
+
+def test_other_hosts_cannot_inject_or_take_the_route(link):
+    radio, forwarder = link
+    radio.forwarder = ("192.0.2.9", 1)     # the real forwarder lives elsewhere
+    forwarder.pull(b"\x00\x09")
+    forwarder.push(b"\x00\x0a", {"rxpk": [rxpk()]})
+    time.sleep(0.05)
+    assert radio.receive() == [] and radio.forwarder == ("192.0.2.9", 1)
     forwarder.sock.settimeout(0.05)
     with pytest.raises(TimeoutError):
         forwarder.recv()
-    assert "no forwarder" in radio.version()
 
 
-def test_downlink_is_a_timestamped_pull_resp_to_the_latest_pull_data(link):
+def test_pinned_forwarder_address_drops_everyone_else():
+    radio = GwmpSX1302(GwmpRadioConfig(bind="127.0.0.1", port=0, forwarder="192.0.2.9",
+                                       forwarder_timeout=0.3))
+    radio._bind()
+    stranger = Forwarder(radio.sock.getsockname()[1])
+    try:
+        stranger.pull()
+        time.sleep(0.05)
+        radio._pump()
+        assert radio.forwarder is None
+    finally:
+        radio.stop()
+        stranger.sock.close()
+    radio.config.forwarder = "localhost"
+    forwarder = connect(radio)
+    assert radio.forwarder == forwarder.sock.getsockname()
+    radio.stop()
+    forwarder.sock.close()
+    radio.config.forwarder = "no-such-host.invalid"
+    with pytest.raises(ConnectionError):
+        radio.start()
+
+
+def test_downlink_is_a_timestamped_pull_resp_to_the_forwarder(link):
     radio, forwarder = link
-    stale = Forwarder(forwarder.server[1])
-    stale.pull()
-    assert poll(radio, stale) == ([], b"\x02\x00\x07\x04")
-    forwarder.pull(b"\x12\x34")
-    assert poll(radio, forwarder) == ([], b"\x02\x12\x34\x04")
     thread, seen = forwarder.answer_tx(b'{"txpk_ack":{"error":"NONE"}}')
     radio.send(920400000, b"\x00\xff", tx_timestamp_us=0xFFFFFFF0 + 1000000, invert_pol=True)
     thread.join(2)
-    stale.sock.close()
     data = seen[0]
     assert data[0] == 2 and data[3] == 3
     assert json.loads(data[4:]) == {"txpk": {
@@ -147,8 +247,6 @@ def test_downlink_is_a_timestamped_pull_resp_to_the_latest_pull_data(link):
 
 def test_untimed_send_is_immediate_and_empty_tx_ack_is_success(link):
     radio, forwarder = link
-    forwarder.pull()
-    poll(radio, forwarder)
     thread, seen = forwarder.answer_tx()
     radio.send(927600000, b"\x01", rf_power=14, bandwidth=BW_125KHZ)
     thread.join(2)
@@ -165,8 +263,6 @@ def test_untimed_send_is_immediate_and_empty_tx_ack_is_success(link):
 ])
 def test_tx_ack_errors_are_raised(link, body, match):
     radio, forwarder = link
-    forwarder.pull()
-    poll(radio, forwarder)
     thread, _ = forwarder.answer_tx(body)
     with pytest.raises(RuntimeError, match=match):
         radio.send(920400000, b"\x01", tx_timestamp_us=42)
@@ -175,8 +271,6 @@ def test_tx_ack_errors_are_raised(link, body, match):
 
 def test_tx_ack_warning_is_logged_not_raised(link, caplog):
     radio, forwarder = link
-    forwarder.pull()
-    poll(radio, forwarder)
     thread, _ = forwarder.answer_tx(b'{"txpk_ack":{"warn":"TX_POWER","value":12}}')
     radio.send(920400000, b"\x01", tx_timestamp_us=42)
     thread.join(2)
@@ -186,8 +280,6 @@ def test_tx_ack_warning_is_logged_not_raised(link, caplog):
 def test_missing_or_mismatched_tx_ack_is_unconfirmed_and_uplinks_survive_the_wait(link):
     radio, forwarder = link
     radio.config.tx_ack_timeout = 0.2
-    forwarder.pull()
-    poll(radio, forwarder)
     forwarder.tx_ack(b"\xee\xee")                     # stale ack, wrong token
     forwarder.push(b"\x00\x09", {"rxpk": [rxpk(data="AQ==")]})
     with pytest.raises(RuntimeError, match="unconfirmed"):
@@ -195,11 +287,9 @@ def test_missing_or_mismatched_tx_ack_is_unconfirmed_and_uplinks_survive_the_wai
     assert [p.payload for p in radio.receive()] == [b"\x01"]
 
 
-def test_tx_ack_from_another_host_is_ignored(link):
+def test_tx_ack_from_another_port_is_ignored(link):
     radio, forwarder = link
     radio.config.tx_ack_timeout = 0.2
-    forwarder.pull()
-    poll(radio, forwarder)
     other = Forwarder(forwarder.server[1])
     def spoof():
         data = forwarder.recv()
@@ -214,22 +304,22 @@ def test_tx_ack_from_another_host_is_ignored(link):
 
 def test_invalid_payload_size_never_reaches_the_forwarder(link):
     radio, forwarder = link
-    forwarder.pull()
-    poll(radio, forwarder)
     for payload in (b"", bytes(257)):
         with pytest.raises(ValueError):
             radio.send(920400000, payload)
+    with pytest.raises(ValueError):
+        radio.send(920400000, b"\x01", bandwidth=99)
 
 
 def test_lifecycle_errors_are_connection_errors():
     radio = GwmpSX1302(GwmpRadioConfig(bind="127.0.0.1", port=0))
     with pytest.raises(ConnectionError):
         radio.receive()
-    radio.start()
+    radio._bind()
     try:
         clash = GwmpSX1302(GwmpRadioConfig(bind="127.0.0.1",
                                            port=radio.sock.getsockname()[1]))
-        with pytest.raises(ConnectionError, match="bind"):
+        with pytest.raises(ConnectionError, match="Cannot open"):
             clash.start()
     finally:
         radio.stop()
@@ -242,13 +332,16 @@ def test_gwmp_is_opt_in_configuration(tmp_path):
         path.write_text('gw_mac: "010203040506"\n' + radio)
         return RuntimeConfig.load(str(path))
     assert load("").radio is None
-    cfg = load("radio:\n  gwmp:\n    bind: 192.0.2.5\n    port: 1701\n").radio
+    cfg = load("radio:\n  gwmp:\n    bind: 192.0.2.5\n    port: 1701\n"
+               "    forwarder: sx1302.local\n").radio
     assert (cfg.bind, cfg.port, cfg.backend) == ("192.0.2.5", 1701, "sx1302-gwmp")
+    assert (cfg.forwarder, cfg.forwarder_timeout) == ("sx1302.local", 30.0)
     assert load("radio:\n  gwmp: {}\n").radio == GwmpRadioConfig("0.0.0.0", 1700)
     ssh = load("radio:\n  host: h\n  username: u\n  key_file: k\n  known_hosts: n\n").radio
     assert ssh.host == "h" and not hasattr(ssh, "backend")
     for bad in ("radio:\n  gwmp: {port: 70000}\n", "radio:\n  gwmp: {bind: ''}\n",
-                "radio:\n  gwmp: {tx_ack_timeout: 0}\n", "radio:\n  gwmp: {secret: x}\n",
+                "radio:\n  gwmp: {tx_ack_timeout: 0}\n",
+                "radio:\n  gwmp: {forwarder_timeout: 0}\n", "radio:\n  gwmp: {forwarder: 5}\n", "radio:\n  gwmp: {secret: x}\n",
                 "radio:\n  gwmp: {}\n  host: h\n"):
         with pytest.raises((ValueError, TypeError)):
             load(bad)

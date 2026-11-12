@@ -24,8 +24,14 @@ radio:
   gwmp:
     bind: 0.0.0.0        # default; use a specific interface address where possible
     port: 1700           # default
-    tx_ack_timeout: 0.25 # seconds send() waits for TX_ACK (default)
+    forwarder: 192.0.2.10   # optional: only accept datagrams from this host
+    forwarder_timeout: 30   # seconds without PULL_DATA before "disconnected" (default)
+    tx_ack_timeout: 0.25    # seconds send() waits for TX_ACK (default)
 ```
+
+Set `forwarder` (name or address, resolved at start) whenever the Pi has a
+stable address. Keep `forwarder_timeout` at several times the forwarder's
+`keepalive_interval`.
 
 `radio.gwmp` cannot be combined with the SSH keys (`host`, `username`, …) in the
 same `radio` block. Omitting `radio` still selects the local ctypes HAL, and a
@@ -37,8 +43,19 @@ same `radio` block. Omitting `radio` still selects the local ctypes HAL, and a
   (`tmst` → `timestamp_us`, `stat == 1` → `crc_ok`, `datr`/`codr` parsed,
   `ul_channel` derived from the frequency, not the IF index). `stat` reports and
   malformed entries are dropped.
+- `start()` binds the socket and waits up to `forwarder_timeout` for the first
+  PULL_DATA, so the UI shows "connected" only once a forwarder is talking to
+  the bridge. Until then the runtime shows it as unavailable and retries.
 - PULL_DATA is answered with PULL_ACK and its source address becomes the
-  downlink route (latest one wins).
+  downlink route. Once a route exists, PULL_DATA from a different host is
+  ignored, and PUSH_DATA and TX_ACK are accepted only from the route's host.
+- If no PULL_DATA arrives for `forwarder_timeout`, `receive()` raises
+  `ConnectionError`; the runtime marks the radio disconnected, drops volatile
+  sessions as it does for an SSH outage, and calls `start()` again.
+- PULL_DATA from the same host on a new source port is treated as a forwarder
+  restart (stock `lora_pkt_fwd` keeps one downlink socket for its lifetime, and
+  a restart resets `tmst`). The new route is adopted and `receive()` raises
+  `ConnectionError` once, forcing the same reconnect.
 - `send()` emits one PULL_RESP `txpk` (`tmst`, or `imme: true` when no timestamp
   is given; `freq`, `rfch: 0`, `powe`, `datr: "SF5BW500"`, `codr: "4/5"`, `ipol`,
   `prea: 12`, base64 `data`) and waits up to `tx_ack_timeout` for the TX_ACK with
@@ -51,8 +68,6 @@ same `radio` block. Omitting `radio` still selects the local ctypes HAL, and a
   - No PULL_DATA seen yet: `RuntimeError`, nothing is sent.
 
   The runtime already logs `RuntimeError` from `send()` as "TX skipped".
-- `start()` only binds the socket, so the UI shows the radio as connected as
-  soon as the port is bound, whether or not a forwarder is talking to it.
 
 ## `lora_pkt_fwd` configuration
 
@@ -194,30 +209,37 @@ which is evidence about intent, not about behaviour on the bench.
    in 200 kHz steps). If it reports anything else, `ul_channel` is 0 and the
    downlink goes to the wrong channel.
 9. **Counter wrap and forwarder restarts.** `tmst` is a 32-bit microsecond
-   counter (wraps every ~71.6 min) and resets when `lora_pkt_fwd` restarts. The
-   bridge passes it through masked to 32 bits, as the other backends do; the
-   restart case is not detected.
-10. **Forwarder liveness.** A stopped forwarder is indistinguishable from a
-    quiet band: the radio stays "connected". No PULL_DATA timeout is
-    implemented.
+   counter (wraps every ~71.6 min). The bridge passes it through masked to
+   32 bits, as the other backends do. Restart detection relies on the source
+   port changing, which is how stock `lora_pkt_fwd` behaves by source reading;
+   a NAT or a different forwarder that changes ports without restarting would
+   cause spurious reconnects, and neither case has been observed on hardware.
+10. **Liveness timing.** `forwarder_timeout` (30 s) against the forwarder's
+    `keepalive_interval` is untested with a real forwarder, as is how sensors
+    behave across the session drop that a reconnect causes.
 11. **The `global_conf.json` above** has not been loaded by `lora_pkt_fwd`.
 
 ## Security
 
-GWMP has **no authentication and no encryption**, unlike the SSH backend:
+GWMP has **no authentication and no encryption**, unlike the SSH backend. The
+backend narrows who can talk to it by source address, which stops accidents and
+casual interference but not an attacker on the same network, because UDP source
+addresses can be spoofed:
 
-- Anyone who can reach the bridge's UDP port can send PULL_DATA and become the
-  downlink route, send forged PUSH_DATA uplinks, or forge TX_ACKs (the address
-  check is a spoofable UDP source address).
-- Anyone who can reach the forwarder's downlink socket with a spoofed source
-  address can inject PULL_RESP and make the concentrator transmit arbitrary
-  frames at arbitrary power within the LUT.
+- With `forwarder` set, datagrams from any other address are dropped. Without
+  it, the first host to send PULL_DATA after a (re)start becomes the forwarder,
+  and other hosts are ignored only while it stays alive.
+- A host that spoofs the forwarder's address can inject uplinks and forge
+  TX_ACKs. Stealing the downlink route this way is visible (it looks like a
+  restart and forces a reconnect) but still disrupts the link.
+- Nothing in the bridge protects the forwarder itself: anyone who can reach its
+  downlink socket with a spoofed bridge address can inject PULL_RESP and make
+  the concentrator transmit arbitrary frames at any power in the LUT.
 - All traffic is cleartext on the wire. SuperLink payloads are encrypted and
   MIC-protected at the protocol layer, so an injected uplink cannot forge sensor
   data, but pairing-phase traffic uses the well-known factory key, and injection
-  and denial of service (hijacking the downlink route, exhausting the JIT queue)
-  need no keys at all.
+  and denial of service need no keys at all.
 
-Use it only on a network segment you trust, bind to a specific interface, and
-firewall the port to the Pi's address. If the path crosses anything untrusted,
-tunnel it (WireGuard, or keep using the SSH backend).
+Use it only on a network segment you trust, set `forwarder`, bind to a specific
+interface, and firewall the port to the Pi's address. If the path crosses
+anything untrusted, tunnel it (WireGuard, or keep using the SSH backend).

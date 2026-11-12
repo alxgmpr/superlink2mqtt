@@ -2,8 +2,8 @@
 
 The concentrator host runs a stock ``lora_pkt_fwd`` pointed at this socket;
 no project code runs there. GWMP has no authentication or encryption: any
-host that can reach the port can inject uplinks and, once it sends PULL_DATA,
-receive the downlinks. See docs/GWMP_BACKEND.md. Not verified on hardware.
+host that can spoof the forwarder's UDP source address can inject uplinks or
+take over the downlink route. See docs/GWMP_BACKEND.md. Not verified on hardware.
 """
 import base64
 from dataclasses import dataclass
@@ -35,6 +35,12 @@ _UL_CHANNEL = {freq: i + 1 for i, freq in enumerate(sorted(UL_FREQ_HZ))}
 class GwmpRadioConfig:
     bind: str = "0.0.0.0"
     port: int = 1700
+    # Host or address of the packet forwarder. When set, datagrams from any
+    # other source address are dropped. Not authentication: UDP sources spoof.
+    forwarder: str | None = None
+    # Silence (no PULL_DATA) after which the forwarder is declared gone. Keep
+    # it a few multiples of lora_pkt_fwd's keepalive_interval.
+    forwarder_timeout: float = 30.0
     # How long send() waits for the forwarder's TX_ACK. It comes straight out
     # of the ~1 s downlink budget when a burst is queued, so keep it short.
     tx_ack_timeout: float = 0.25
@@ -46,9 +52,13 @@ class GwmpRadioConfig:
             raise ValueError("radio.gwmp.bind is required")
         if type(self.port) is not int or not 0 <= self.port <= 65535:
             raise ValueError("radio.gwmp.port must be between 0 and 65535")
-        if (type(self.tx_ack_timeout) not in (int, float)
-                or not 0 < self.tx_ack_timeout <= 5):
-            raise ValueError("radio.gwmp.tx_ack_timeout must be in (0, 5] seconds")
+        if self.forwarder is not None and (not isinstance(self.forwarder, str)
+                                           or not self.forwarder):
+            raise ValueError("radio.gwmp.forwarder must be a host name or address")
+        for name, limit in (("tx_ack_timeout", 5), ("forwarder_timeout", 3600)):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not 0 < value <= limit:
+                raise ValueError(f"radio.gwmp.{name} must be in (0, {limit}] seconds")
 
 
 def parse_rxpk(rx) -> RxPacket:
@@ -75,28 +85,49 @@ class GwmpSX1302:
     def __init__(self, config):
         self.config = config
         self.sock = None
-        self.forwarder = None  # address of the most recent PULL_DATA
+        self.forwarder = None  # downlink route: source of the accepted PULL_DATA
+        self._peer_ip = None   # config.forwarder, resolved
+        self._last_pull = 0.0
+        self._restarted = False
         self._pending = []
         self._token = 0
         self._acks = {}
 
-    def start(self):
+    def _bind(self):
         self.stop()
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
+            if self.config.forwarder:
+                self._peer_ip = socket.gethostbyname(self.config.forwarder)
             sock.bind((self.config.bind, self.config.port))
         except OSError as exc:
             sock.close()
-            raise ConnectionError(f"Cannot bind GWMP socket: {exc}") from exc
+            raise ConnectionError(f"Cannot open GWMP socket: {exc}") from exc
         sock.setblocking(False)
         self.sock = sock
-        # ponytail: binding counts as "connected"; a dead forwarder just looks
-        # like silence. Add a PULL_DATA liveness timeout if that matters.
+
+    def start(self):
+        """Bind, then wait for a forwarder: "connected" means one is talking to us."""
+        self._bind()
+        deadline = time.monotonic() + self.config.forwarder_timeout
+        while self.forwarder is None:
+            remaining = deadline - time.monotonic()
+            sock = self.sock  # stop() from another thread ends the wait
+            if remaining <= 0 or sock is None:
+                self.stop()
+                raise ConnectionError("No PULL_DATA from a packet forwarder")
+            try:
+                select.select([sock], [], [], min(remaining, 0.5))
+                self._pump()
+            except (OSError, ValueError) as exc:  # closed under us
+                self.stop()
+                raise ConnectionError("GWMP socket closed while waiting") from exc
 
     def stop(self):
         if self.sock is not None:
             self.sock.close()
-        self.sock = self.forwarder = None
+        self.sock = self.forwarder = self._peer_ip = None
+        self._restarted = False
         self._pending = []
         self._acks = {}
 
@@ -116,37 +147,60 @@ class GwmpSX1302:
             except OSError as exc:
                 self.stop()
                 raise ConnectionError(f"GWMP socket failed: {exc}") from exc
-            if len(data) < 4 or data[0] != VERSION:
+            if len(data) < HEADER or data[0] != VERSION:
+                continue
+            if self._peer_ip and addr[0] != self._peer_ip:
                 continue
             token, kind = data[1:3], data[3]
             try:
-                if kind == PUSH_DATA and len(data) >= HEADER:
+                if kind == PULL_DATA and self._route(addr):
+                    self.sock.sendto(bytes([VERSION]) + token + bytes([PULL_ACK]), addr)
+                elif self.forwarder is None or addr[0] != self.forwarder[0]:
+                    continue  # uplinks and acks only from the forwarder's host
+                elif kind == PUSH_DATA:
                     self.sock.sendto(bytes([VERSION]) + token + bytes([PUSH_ACK]), addr)
                     self._uplinks(data[HEADER:])
-                elif kind == PULL_DATA and len(data) >= HEADER:
-                    self.forwarder = addr
-                    self.sock.sendto(bytes([VERSION]) + token + bytes([PULL_ACK]), addr)
                 elif kind == TX_ACK and addr == self.forwarder:
                     self._acks[token] = data[HEADER:]
             except OSError as exc:  # e.g. ICMP unreachable surfaced on sendto
                 log.debug("GWMP reply to %s failed: %s", addr, exc)
+
+    def _route(self, addr):
+        """Accept a PULL_DATA source as the downlink route, or refuse it."""
+        if self.forwarder is not None and addr != self.forwarder:
+            if addr[0] != self.forwarder[0]:
+                # A live forwarder keeps the route; another host cannot take it.
+                log.debug("Ignoring PULL_DATA from second host %s", addr[0])
+                return False
+            # lora_pkt_fwd keeps one downlink socket for its lifetime, so a new
+            # source port means it restarted and its tmst counter reset.
+            self._restarted = True
+        self.forwarder = addr
+        self._last_pull = time.monotonic()
+        return True
 
     def _uplinks(self, body):
         try:
             rxpk = json.loads(body).get("rxpk", [])  # stat-only reports have none
             if not isinstance(rxpk, list):
                 raise ValueError("rxpk is not a list")
-        except (ValueError, AttributeError) as exc:
+        except (ValueError, AttributeError, RecursionError) as exc:
             log.debug("Ignoring malformed PUSH_DATA: %s", exc)
             return
         for rx in rxpk:
             try:
                 self._pending.append(parse_rxpk(rx))
-            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            except (KeyError, TypeError, ValueError, AttributeError,
+                    ArithmeticError) as exc:  # e.g. "freq": Infinity
                 log.debug("Ignoring malformed rxpk: %s", exc)
 
     def receive(self):
         self._pump()
+        # ConnectionError makes the runtime drop sessions and call start() again.
+        if self._restarted:
+            raise ConnectionError("Packet forwarder restarted")
+        if time.monotonic() - self._last_pull > self.config.forwarder_timeout:
+            raise ConnectionError("Packet forwarder stopped sending PULL_DATA")
         packets, self._pending = self._pending, []
         return packets
 
@@ -154,6 +208,8 @@ class GwmpSX1302:
              tx_timestamp_us=0, invert_pol=False):
         if not 1 <= len(payload) <= 256:
             raise ValueError(f"payload size out of range: {len(payload)}")
+        if bandwidth not in _BW_KHZ:
+            raise ValueError(f"unsupported bandwidth code: {bandwidth}")
         self._pump()
         if self.forwarder is None:
             raise RuntimeError("No packet forwarder has sent PULL_DATA yet")
@@ -189,7 +245,7 @@ class GwmpSX1302:
         try:
             ack = json.loads(body)["txpk_ack"]
             error, warn = ack.get("error", "NONE"), ack.get("warn")
-        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, RecursionError) as exc:
             raise RuntimeError("Malformed TX_ACK from packet forwarder") from exc
         if error != "NONE":
             raise RuntimeError(f"Packet forwarder rejected TX: {error}")
