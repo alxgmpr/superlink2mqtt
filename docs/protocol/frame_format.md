@@ -122,6 +122,32 @@ For **SecureHeader** frames (data, management, key renewal):
 - KeyRenewReq/Rsp: session key rotation
 - SwitchClassA/B/C: change operating mode
 
+##### UL 0x43 `01 00`: unconfirmed poll, no reply needed
+
+After every handshake the sensor sends a run of UL `0x43` frames with body
+`01 00` (session key, MIC valid). On sensor `9041b22e9a53` (2026-11-13) that
+is nine frames at about 30 s spacing, between the reports at uptime ~6 s and
+~302 s. They then stop and telemetry continues at the 300 s cadence.
+
+The gateway does not answer them:
+
+- lorabrd sends no downlink after a `0x43` in
+  `captures/live/bridge_adopt_fresh_pass2_DECODED.txt`. The one exception is
+  when the controller has a message queued, which then goes out as a `0x74`
+  on that `0x43` (the FACTORY_RESET `0735` in that capture).
+- `0x43` lacks bit 0x10, which `0x53` and `0x54` carry. Those two are the
+  uplinks the sensor re-sends about every 11 s until it gets a `0x63` ack, so
+  0x10 reads as "confirmed". This is inferred from behaviour, not from the
+  Dctrl decompilation.
+- Hardware test, 2026-11-13: acking every `0x43` with DL `0x63` `01 00`
+  (seq_lo = 0x80 | UL seq_hi, the form used for `0x54`) changed nothing. The
+  sensor sent the same nine frames at the same spacing and the 300 s cadence
+  was unaffected. The change was reverted.
+
+Why the sensor polls for those five minutes is not known. In practice a
+`0x43` is a command window: a command queued during the run is delivered
+within about 30 s instead of waiting for the next 300 s report.
+
 ## Connection Message Inner Structure
 
 The connection handler (`FUN_000524ac`) shows that after unpacking the
