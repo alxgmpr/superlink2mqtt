@@ -29,9 +29,17 @@ class DeviceRecord:
     prop_sizes: dict | None = None
     name: str | None = None
     network_id: int | None = None
+    # The live link session, or None when there is none. Persisted so a bridge
+    # restart resumes it: the sensor keeps using this key and never notices,
+    # where a forgotten key strands it until someone presses its button.
+    session_key: bytes | None = None
+    dl_ctr: int = 0
+    dl_seq: int = 0
+    dl_unacked: bool = False
 
 
-_BYTES_FIELDS = ("mac", "primary_key", "fallback_key", "kdf_context", "transport_key")
+_BYTES_FIELDS = ("mac", "primary_key", "fallback_key", "kdf_context",
+                 "transport_key", "session_key")
 
 
 def _to_json(rec: DeviceRecord) -> dict:

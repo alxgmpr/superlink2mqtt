@@ -178,6 +178,11 @@ class DeviceSession:
 
         self._state = State.IDLE
         self.session_key: bytes | None = None
+        # True from resuming a saved session until the sensor proves it is
+        # still on it (first MIC-verified frame). While set, a discovery from
+        # the sensor means it abandoned that session, so it is answered at
+        # once instead of being ignored until link-lost.
+        self._resume_unconfirmed = False
 
         # Queued application-layer bodies to transmit on the next DL window
         # (drained via _build_command on the sensor's 0x53 command poll).
@@ -244,6 +249,12 @@ class DeviceSession:
             self._ul_counter_offset = record.ul_counter_offset
             if record.prop_sizes is not None:
                 self._prop_sizes = record.prop_sizes
+            # A live session saved by a previous run: start() resumes it.
+            if record.adopted and record.session_key is not None:
+                self.session_key = record.session_key
+                self._dl_ctr = record.dl_ctr
+                self._dl_seq = record.dl_seq
+                self._dl_unacked = record.dl_unacked
         else:
             self.sensor_mac = None
             self._device_type = None
@@ -279,13 +290,27 @@ class DeviceSession:
 
     # ------------------------------------------------------------- lifecycle
     def start(self, now: float = 0.0):
-        """Transition from IDLE to BEACONING."""
+        """Leave IDLE: resume a session restored from the record (ACTIVE), else
+        BEACONING. A resumed session gets the normal link-lost grace from `now`;
+        if the sensor is gone it times out to BEACONING like any other."""
         self._privkey, self._pubkey = generate_keypair()
-        self._state = State.BEACONING
+        resumed = self._state is State.IDLE and self.session_key is not None
+        self._state = State.ACTIVE if resumed else State.BEACONING
+        self._resume_unconfirmed = resumed
         self._mgmt_counter = self.mgmt_counter_start
         self._last_beacon_time = now
         self._last_data_rx = now
-        log.info("Session started, entering BEACONING state")
+        log.info("Session started, %s", "resuming saved session (ACTIVE)"
+                 if resumed else "entering BEACONING state")
+
+    def _autostart(self, now: float) -> list:
+        """Start an IDLE session on first use; announce a resumed link."""
+        if self._state is not State.IDLE:
+            return []
+        self.start(now)
+        if self._state is State.ACTIVE and self.sensor_mac:
+            return [DeviceStateEvent(mac=self.sensor_mac, state="active")]
+        return []
 
     def beacon_due(self) -> bool:
         """Check if it's time to send a beacon (legacy monotonic clock)."""
@@ -320,18 +345,15 @@ class DeviceSession:
         rssi/snr are the gateway's per-packet measurements (dBm / dB); when
         present, a decoded telemetry frame emits a LinkSignal event.
         """
-        if self._state is State.IDLE:
-            self.start(now)
+        started = self._autostart(now)
         _decoded, frames, events = self._dispatch(frame, channel, now,
                                                   rssi, snr)
-        return frames, events
+        return frames, started + events
 
     def tick(self, now: float) -> tuple[list[OutgoingFrame], list]:
         """Time-driven work (beacon emission)."""
-        if self._state is State.IDLE:
-            self.start(now)
         frames: list[OutgoingFrame] = []
-        events: list = []
+        events: list = self._autostart(now)
         if (self.beacon_enabled and self._state == State.BEACONING
                 and (now - self._last_beacon_time) >= self.beacon_interval):
             from ..hal import BEACON_FREQ_HZ
@@ -428,7 +450,17 @@ class DeviceSession:
             prop_sizes=self._prop_sizes,
             name=self.name,
             network_id=self.network_id,
+            **self._live_session(),
         )
+
+    def _live_session(self) -> dict:
+        """Record fields for the live session. Only an ACTIVE session, or one
+        restored and not yet started (IDLE), has one; BEACONING never does even
+        when a stale session_key is still set."""
+        if self._state is State.BEACONING or self.session_key is None:
+            return {}
+        return {"session_key": self.session_key, "dl_ctr": self._dl_ctr,
+                "dl_seq": self._dl_seq, "dl_unacked": self._dl_unacked}
 
     # -------------------------------------------------------------- dispatch
     def _dispatch(self, frame: SuperLinkFrame | None, channel: int, now: float,
@@ -585,6 +617,16 @@ class DeviceSession:
                 self._state = State.BEACONING
                 return frame, [], [DeviceStateEvent(mac=frame.mac,
                                                     state="discovered")]
+            if self._resume_unconfirmed and is_discovery_ad(frame.payload):
+                # At most once per restart, so it cannot become the per-0x40
+                # teardown loop: after this the session is BEACONING.
+                log.info("discovery from %s before the resumed session was "
+                         "confirmed - dropping it and re-handshaking",
+                         format_mac(frame.mac))
+                self._resume_unconfirmed = False
+                self._state = State.BEACONING
+                self.session_key = None
+                return self._handle_beaconing(frame, channel, now)
             # Ordinary reconnect 0x40 — leave it to the liveness timeout to drop
             # to BEACONING; ignore here (per-0x40 re-handshake loops the sensor).
             return frame, [], events
@@ -631,6 +673,7 @@ class DeviceSession:
         if (frame.payload is None
                 or frame.mic != compute_mic(header, frame.payload)):
             return frame, [], events
+        self._resume_unconfirmed = False
         if frame.dctrl in (0x54, 0x44):
             self._last_data_rx = now
             self._short_challenge_count = 0

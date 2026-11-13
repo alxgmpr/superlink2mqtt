@@ -663,3 +663,85 @@ def test_bad_mic_0x42_in_active_ignored():
     frame, _ = _craft_challenge_frame(s, corrupt_mic=True)
     assert s.feed(frame, channel=1, now=30.0) == ([], [])
     assert s.session_key == old_key
+
+
+# --- live session survives a bridge restart ----------------------------------
+# HW 2026-11-12/13: every app restart stranded the sensor until a button press.
+# The sensor keeps sending on its session key; a restarted bridge had forgotten
+# that key, ignored the frames in BEACONING, and the sensor never re-discovered.
+# The live session (key + DL counters) is therefore part of the record.
+
+def test_record_carries_live_session_only_while_active():
+    from superlink.bridge.session import State
+    s = _active_data_session()
+    s._dl_ctr, s._dl_seq, s._dl_unacked = 3, 12, True
+    rec = s.to_record()
+    assert (rec.session_key, rec.dl_ctr, rec.dl_seq, rec.dl_unacked) == \
+        (s.session_key, 3, 12, True)
+    s._state = State.BEACONING          # e.g. adopt round-trip leaves the key set
+    assert s.to_record().session_key is None
+
+
+def _restored(record):
+    return DeviceSession(record, gw_mac=GW_MAC, pairing_key=DEFAULT_PAIRING_KEY,
+                         profiles=ProfileRegistry.load(), link_lost_timeout=60.0)
+
+
+def test_restarted_bridge_resumes_session_from_record():
+    from superlink.bridge.session import State
+    from superlink.bridge.events import DeviceStateEvent, PropertyEvent
+    before = _active_data_session()
+    before._dl_ctr, before._dl_seq = 3, 12
+    after = _restored(before.to_record())            # the "restart"
+
+    frames, events = after.feed(_craft_data_frame(before.session_key),
+                                channel=1, now=1000.0)
+
+    assert after._state == State.ACTIVE
+    assert any(isinstance(e, PropertyEvent) for e in events)   # decoded
+    assert any(isinstance(e, DeviceStateEvent) and e.state == "active"
+               for e in events)                                 # back online
+    assert [f.data[1] for f in frames] == [0x63]               # uplink ACKed
+    assert frames[0].data[8] == 13                             # DL seq continues
+    assert after._dl_ctr == 3
+
+
+def test_restored_session_times_out_if_sensor_is_gone():
+    from superlink.bridge.session import State
+    after = _restored(_active_data_session().to_record())
+    after.tick(now=1000.0)                           # resumes ACTIVE with a grace
+    assert after._state == State.ACTIVE
+    after.tick(now=1061.0)
+    assert after._state == State.BEACONING
+    assert after.to_record().session_key is None
+
+
+def test_record_without_session_starts_beaconing():
+    from superlink.bridge.session import State
+    s = _restored(DeviceRecord(mac=SENSOR_MAC, adopted=True))
+    s.tick(now=1.0)
+    assert s._state == State.BEACONING
+
+
+def test_discovery_before_resume_confirmed_is_answered_at_once():
+    # The saved session may be dead (bridge was down long enough for the sensor
+    # to give up). A button press then sends a 0x40; it must not be ignored for
+    # a whole link-lost timeout just because we resumed ACTIVE.
+    from superlink.bridge.session import State
+    after = _restored(_active_data_session().to_record())
+    frames, _ = after.feed(_craft_discovery_frame(ADOPTED_DISCOVERY_PAYLOAD),
+                           channel=1, now=1000.0)
+    assert [f.data[1] for f in frames] == [0x62]          # ConnRsp
+    assert after._state == State.BEACONING and after.session_key is None
+
+
+def test_discovery_after_resume_confirmed_is_still_ignored():
+    # Once telemetry has been decoded the session is proven; a 0x40 goes back
+    # to being ignored (answering each one is the reverted teardown loop).
+    from superlink.bridge.session import State
+    before = _active_data_session()
+    after = _restored(before.to_record())
+    after.feed(_craft_data_frame(before.session_key), channel=1, now=1000.0)
+    frames, _ = after.feed(_craft_discovery_frame(ADOPTED_DISCOVERY_PAYLOAD),
+                           channel=1, now=1001.0)
+    assert frames == [] and after._state == State.ACTIVE

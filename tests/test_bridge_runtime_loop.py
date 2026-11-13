@@ -80,3 +80,26 @@ def test_poll_once_drives_real_session_to_emit_0x62():
     assert any(s["payload"][1] == 0x62 for s in hal.sent), "no 0x62 scheduled"
     chal = [s for s in hal.sent if s["payload"][1] == 0x62][-1]
     assert chal["tx_timestamp_us"] == 9000 + 1_000_000
+
+
+def test_session_changes_are_persisted_as_they_happen():
+    """A crash or power loss must not lose the live session: the store is
+    updated whenever an adopted session's record changes, not only at exit."""
+    from superlink.bridge.session import Adoption, State
+    from superlink.bridge.store import DeviceRecord
+    from superlink.decoder import build_frame, compute_mic
+    store = InMemoryDeviceStore()
+    store.save(DeviceRecord(mac=SENSOR_MAC, adopted=True))
+    hal = FakeHal()
+    rt = BridgeRuntime(_cfg(), hal, store=store)
+    s = rt._sessions[SENSOR_MAC]
+    s.start(0.0)
+    s._state, s._adoption, s.session_key = State.ACTIVE, Adoption.ADOPTED, bytes(range(32))
+    body = b"\x0c\x00\x0f\x00\x01"
+    mic = compute_mic(bytes([0xE0, 0x54]) + SENSOR_MAC + b"\x10\x00", body)
+    raw = build_frame(0xE0, 0x54, SENSOR_MAC, 0x10, 0x00, mic, body,
+                      s.session_key, counter=5)
+    hal.inbox.append(make_packet(raw, ul_channel=1))
+    rt.poll_once(now=10.0)
+    saved = store.load_all()[0]
+    assert saved.session_key == s.session_key and saved.dl_seq == 1

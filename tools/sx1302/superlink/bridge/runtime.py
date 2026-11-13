@@ -48,6 +48,9 @@ class BridgeRuntime:
         self._radio_reset_needed = True
         self._tick_interval = 1.0
         self._last_tick = 0.0
+        # Last record written per device, so the store is rewritten only when
+        # an adopted session's record actually changes.
+        self._persisted: dict[bytes, object] = {}
         self.core = BridgeCore(self.store, self.profiles, self._session_factory,
                                auto_adopt=False)
         self.core.subscribe(self._on_event)
@@ -112,6 +115,7 @@ class BridgeRuntime:
             # runtime's copy must go too, or the shutdown flush in run()'s
             # `finally` block resurrects the removed device on the next save.
             self._sessions.pop(event.mac, None)
+            self._persisted.pop(event.mac, None)
         # Every event fans out to sinks (B's MQTT publisher attaches here).
         for sink in self._sinks:
             sink(event)
@@ -201,6 +205,16 @@ class BridgeRuntime:
             frames = self.core.feed(pkt.payload, pkt.ul_channel, now,
                                     rssi=pkt.rssi, snr=pkt.snr)
             self._schedule(frames, base_ts=pkt.timestamp_us)
+            self._persist_changed()
+
+    def _persist_changed(self) -> None:
+        """Keep the store current with every adopted session (keys, counters,
+        live session), so a crash or restart resumes where the sensor is."""
+        for mac, session in self._sessions.items():
+            record = session.to_record()
+            if record.adopted and record != self._persisted.get(mac):
+                self.store.save(record)
+                self._persisted[mac] = record
 
     def tick_if_due(self, now: float) -> None:
         """Call _maybe_tick at most once per _tick_interval seconds."""
@@ -212,6 +226,7 @@ class BridgeRuntime:
         # Housekeeping only (session timeouts). No RX packet to correlate, so any
         # frames go out best-effort/immediate.
         frames = self.core.tick(now)
+        self._persist_changed()
         for f in frames:
             try:
                 self.hal.send(f.freq_hz, f.data, bandwidth=BW_500KHZ,

@@ -137,3 +137,12 @@ def test_parallel_saves_preserve_all_records(tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(store.save, records))
     assert {r.mac for r in store.load_all()} == {r.mac for r in records}
+
+
+def test_json_roundtrip_preserves_live_session(tmp_path):
+    store = JsonDeviceStore(str(tmp_path / "devices.json"))
+    rec = DeviceRecord(mac=bytes.fromhex("9041b22e9a53"), adopted=True,
+                       session_key=bytes(range(32)), dl_ctr=3, dl_seq=12,
+                       dl_unacked=True)
+    store.save(rec)
+    assert store.load_all() == [rec]
