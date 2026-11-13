@@ -549,6 +549,8 @@ class DeviceSession:
             return None, [], []
         if self.session_key is None:
             return None, [], []
+        if frame.dctrl == 0x42:
+            return self._reconnect_in_active(frame, channel, now)
         if frame.dctrl not in (0x54, 0x44, 0x40, 0x53, 0x43):
             log.info("RX dctrl=0x%02X seq=%02X.%02X (ignored in ACTIVE)",
                      frame.dctrl, frame.seq_hi, frame.seq_lo)
@@ -785,6 +787,70 @@ class DeviceSession:
         if of is None and frame.dctrl == 0x54:
             of = self._ack(frame, channel)
         return frame, ([of] if of is not None else []), events
+
+    def _reconnect_in_active(self, frame: SuperLinkFrame, channel: int,
+                             now: float
+                             ) -> tuple[SuperLinkFrame | None, list[OutgoingFrame], list]:
+        """0x42 while ACTIVE: the sensor wants a new session (it rebooted, or
+        dropped ours) while we still think the old one is up.
+
+        HW 2026-11-12: after a REBOOT the sensor sent ~60 of these in two
+        minutes; ignoring them until link-lost (700s) left it dormant. Unlike
+        the reverted "re-handshake on every 0x40" loop, nothing here tears the
+        session down on request:
+          - a resume (`01 00`) is answered with a ConnRsp and the session stays;
+          - a full challenge replaces the session only if its inner blob
+            decrypts to the sensor's MAC under the key it would derive, i.e.
+            the sensor demonstrably holds that key.
+        Anything else is ignored and the session is untouched.
+        """
+        frame = decrypt_frame(frame, self._transport_key,
+                              ul_counter_offset=frame.seq_hi)
+        header = (bytes([frame.mctrl, frame.dctrl]) + frame.mac
+                  + bytes([frame.seq_hi, frame.seq_lo]))
+        if (frame.payload is None
+                or frame.mic != compute_mic(header, frame.payload)):
+            log.info("RX dctrl=0x42 seq=%02X.%02X (bad MIC, ignored in ACTIVE)",
+                     frame.seq_hi, frame.seq_lo)
+            return None, [], []
+        if len(frame.payload) < 49:
+            if frame.payload[:2] != b"\x01\x00" or now < self._backoff_until:
+                return None, [], []
+            of = self._build_connrsp(frame.mac, channel)
+            log.info("0x42 resume while ACTIVE from %s - answered with ConnRsp, "
+                     "session kept", format_mac(frame.mac))
+            return frame, ([of] if of is not None else []), []
+        key = self._challenge_key(frame)
+        if key is None or key == self.session_key:
+            log.info("RX dctrl=0x42 seq=%02X.%02X (%s, ignored in ACTIVE)",
+                     frame.seq_hi, frame.seq_lo,
+                     "unproven challenge" if key is None else "duplicate")
+            return None, [], []
+        log.info("0x42 challenge while ACTIVE from %s - replacing session",
+                 format_mac(frame.mac))
+        # ponytail: the gateway keypair survives link-lost, so a recorded
+        # challenge from an earlier session on the same keypair would still
+        # pass. Rotate the keypair per session if replay ever matters.
+        result = self._handle_beaconing(frame, channel, now)
+        if self.session_key == key:
+            self._last_data_rx = now    # liveness grace for the new session
+        return result
+
+    def _challenge_key(self, frame: SuperLinkFrame) -> bytes | None:
+        """Session key a full 0x42 challenge would establish, or None unless
+        its inner blob [35:45] decrypts under that key to the sensor's MAC."""
+        if not _HAS_CRYPTO:
+            return None
+        remote_pubkey = frame.payload[3:35]
+        try:
+            shared = compute_shared_secret(self._privkey, remote_pubkey)
+        except ValueError:
+            return None
+        key = derive_session_key(shared, self._pubkey, remote_pubkey,
+                                 context=self._kdf_context)
+        blob = bytes(frame.payload[35:45])
+        inner = pysodium.crypto_stream_xor(blob, len(blob), b"\x00" * 24, key)
+        return key if inner[:6] == frame.mac else None
 
     def _ack(self, frame: SuperLinkFrame, channel: int
              ) -> OutgoingFrame | None:

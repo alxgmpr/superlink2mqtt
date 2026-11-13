@@ -59,10 +59,15 @@ healthy session spontaneously.
 
 ## Open / next
 
-- ACTIVE fast-path: currently an in-ACTIVE `0x42` waits out the 60s link-lost
-  timeout before the BEACONING handler answers the next resume. Answering in
-  ACTIVE (drop → ConnRsp) would remove that gap but re-enters teardown-loop
-  territory — add only with careful loop monitoring.
+- ACTIVE fast-path (added 2026-11-13, unit-tested, **not yet HW-verified**):
+  `_reconnect_in_active` handles an in-ACTIVE `0x42` instead of waiting out
+  link-lost. A resume (`01 00`) gets a ConnRsp and the session is kept. A full
+  challenge replaces the session only when its MIC verifies and its inner blob
+  decrypts to the sensor MAC under the key it would derive; anything else is
+  ignored. No path drops a session on request, which is what made the reverted
+  "re-handshake on every 0x40" fix loop. Trigger: a REBOOT command under a live
+  session (HW 2026-11-12: ~60 ignored `0x42`s, sensor dormant before the 700s
+  link-lost fired).
 - The `0a 00 02` middle of the ConnRsp is copied from capture; `0a` is plausibly
   a random 0..63. The resume ConnRsp reuses the same hardcoded bytes and the
   current keypair (we do not regenerate, unlike the firmware — not required for

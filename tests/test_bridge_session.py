@@ -587,3 +587,79 @@ def test_property_report_decodes_with_learned_sizes():
     assert [e.property_id for e in prop_evs] == [13, 3]
     assert prop_evs[0].raw == b"\x00\x3c"
     assert prop_evs[1].raw == b"\x64"
+
+
+# --- 0x42 reconnect while ACTIVE (sensor rebooted under a live session) -------
+# HW 2026-11-12: after a REBOOT command the sensor sent ~60 0x42s in two minutes.
+# The bridge was still ACTIVE and ignored them all, only dropping to BEACONING on
+# link-lost 700s later, by which time the sensor had gone dormant. The session
+# must answer the reconnect in ACTIVE, but never give up a working session for
+# anything short of a challenge that proves the sensor holds the new key.
+
+def _craft_challenge_frame(s, gw_pub=None, corrupt_mic=False):
+    """A full 0x42 ConnectionChallenge from a sensor with a fresh keypair, DH'd
+    against `gw_pub` (default: the session's current pubkey). Returns
+    (frame, expected_session_key)."""
+    from superlink.crypto import (generate_keypair, compute_shared_secret,
+                                  derive_session_key)
+    from superlink.decoder import build_frame, compute_mic, parse_frame
+    import pysodium
+    gw_pub = s._pubkey if gw_pub is None else gw_pub
+    sensor_priv, sensor_pub = generate_keypair()
+    key = derive_session_key(compute_shared_secret(sensor_priv, gw_pub),
+                             gw_pub, sensor_pub, context=s._kdf_context)
+    blob = pysodium.crypto_stream_xor(SENSOR_MAC + b"\x11\x22\x33\x44", 10,
+                                      b"\x00" * 24, key)
+    payload = b"\x01\x02\x01" + sensor_pub + blob + b"\x03\xfe\xff\x03"
+    assert len(payload) == 49
+    header = bytes([0xE0, 0x42]) + SENSOR_MAC + bytes([0x01, 0x06])
+    mic = compute_mic(header, payload)
+    if corrupt_mic:
+        mic = bytes([mic[0] ^ 1]) + mic[1:]
+    raw = build_frame(0xE0, 0x42, SENSOR_MAC, 0x01, 0x06, mic, payload,
+                      s._transport_key, counter=0)
+    return parse_frame(raw), key
+
+
+def test_resume_0x42_in_active_answered_without_dropping_session():
+    from superlink.bridge.session import State
+    s = _active_data_session()
+    old_key = s.session_key
+    frames, _ = s.feed(_craft_short_challenge_frame(), channel=1, now=5.0)
+    assert [f.data[1] for f in frames] == [0x62]          # ConnRsp
+    assert s._state == State.ACTIVE and s.session_key == old_key
+
+
+def test_valid_challenge_in_active_replaces_session():
+    from superlink.bridge.session import State
+    from superlink.bridge.events import DeviceStateEvent
+    s = _active_data_session()
+    s.gw_mac = bytes.fromhex("0102030405ff")   # ChallengeRsp needs a 6-byte MAC
+    s._dl_ctr, s._dl_seq = 7, 9
+    frame, new_key = _craft_challenge_frame(s)
+    frames, events = s.feed(frame, channel=1, now=30.0)
+    assert [f.data[1] for f in frames] == [0x62]          # ChallengeRsp
+    assert s._state == State.ACTIVE and s.session_key == new_key
+    assert (s._dl_ctr, s._dl_seq) == (0, 0)
+    assert s._last_data_rx == 30.0                        # fresh liveness grace
+    assert any(isinstance(e, DeviceStateEvent) and e.state == "active"
+               for e in events)
+
+
+def test_unproven_challenge_in_active_keeps_session():
+    # DH'd against a pubkey that is not ours: the inner blob does not decrypt to
+    # the sensor MAC, so this must not cost us the working session.
+    from superlink.crypto import generate_keypair
+    s = _active_data_session()
+    old_key = s.session_key
+    frame, _ = _craft_challenge_frame(s, gw_pub=generate_keypair()[1])
+    assert s.feed(frame, channel=1, now=30.0) == ([], [])
+    assert s.session_key == old_key
+
+
+def test_bad_mic_0x42_in_active_ignored():
+    s = _active_data_session()
+    old_key = s.session_key
+    frame, _ = _craft_challenge_frame(s, corrupt_mic=True)
+    assert s.feed(frame, channel=1, now=30.0) == ([], [])
+    assert s.session_key == old_key
