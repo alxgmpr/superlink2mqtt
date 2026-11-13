@@ -1150,6 +1150,7 @@ class DeviceSession:
             self._dl_ctr = 0
             self._dl_unacked = False
             self._dl_seq = 0
+            self._post_pair_n = 0   # _build_dl_reply's nonce counter, per key
             self._state = State.ACTIVE
             self._short_challenge_count = 0   # handshake completed; clear the tally
             log.info("Session key derived (kdf_ctx=%s...)",

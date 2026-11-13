@@ -635,12 +635,14 @@ def test_valid_challenge_in_active_replaces_session():
     from superlink.bridge.events import DeviceStateEvent
     s = _active_data_session()
     s.gw_mac = bytes.fromhex("0102030405ff")   # ChallengeRsp needs a 6-byte MAC
-    s._dl_ctr, s._dl_seq = 7, 9
+    s._dl_ctr, s._dl_seq, s._post_pair_n = 7, 9, 3
     frame, new_key = _craft_challenge_frame(s)
     frames, events = s.feed(frame, channel=1, now=30.0)
     assert [f.data[1] for f in frames] == [0x62]          # ChallengeRsp
     assert s._state == State.ACTIVE and s.session_key == new_key
     assert (s._dl_ctr, s._dl_seq) == (0, 0)
+    # The first _build_dl_reply frame on the new key starts over at 01.01.
+    assert s._build_dl_reply(frame.mac, b"\x02")[8:10] == b"\x01\x01"
     assert s._last_data_rx == 30.0                        # fresh liveness grace
     assert any(isinstance(e, DeviceStateEvent) and e.state == "active"
                for e in events)
