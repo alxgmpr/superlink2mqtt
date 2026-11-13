@@ -268,3 +268,89 @@ def test_pending_reset_survives_unrelated_command_with_a_different_tag():
     removed = [e for e in seen if isinstance(e, DeviceRemoved)]
     assert len(removed) == 1
     assert removed[0].mac == MAC and removed[0].reason == "factory_reset"
+
+
+# --- locate start / stop -----------------------------------------------------
+
+def _uptime(seconds):
+    return PropertyEvent(mac=MAC, property_id=1, name="UPTIME", channel=0,
+                         raw=seconds.to_bytes(4, "big"), value=seconds,
+                         unit="s", decoded=True)
+
+
+def test_locate_first_speeds_up_reporting_so_a_stop_can_land():
+    """Commands only reach the sensor after one of its uplinks. Start locate
+    drops REPORT_INTERVAL(13) to 5 s before the LOCATE itself."""
+    from superlink.bridge.events import Locate
+    core, _, sess = _adopted_core()
+    core.submit(Locate(mac=MAC))
+    assert [b[0] for b in sess.queued] == [14, 8]       # PROPERTY_SET, LOCATE
+    assert sess.queued[0][2:] == bytes([13, 0, 0x00, 0x05])
+
+
+def _confirm_locate(core, sess, now):
+    from superlink.bridge.events import CommandStatus
+    sess.to_emit = [CommandStatus(mac=MAC, message_tag=sess.queued[1][1],
+                                  status_code=0)]
+    core.feed(UNKNOWN_FRAME, channel=1, now=now)
+
+
+def test_locate_clock_starts_when_the_sensor_confirms_not_at_the_press():
+    """The LOCATE can sit queued for a full report interval. Restoring the
+    interval 60 s after the press undid the fast polling before the LED had
+    even started (hardware, 2026-11-13)."""
+    from superlink.bridge.events import Locate
+    core, _, sess = _adopted_core()
+    core.tick(100.0)
+    core.submit(Locate(mac=MAC))
+    core.tick(390.0)                                    # still undelivered
+    assert len(sess.queued) == 2
+    _confirm_locate(core, sess, 400.0)
+    core.tick(459.0)
+    assert len(sess.queued) == 2                        # still flashing
+    core.tick(460.0)
+    assert sess.queued[2][2:] == bytes([13, 0, 0x01, 0x2C])   # 300 s
+    core.tick(461.0)
+    assert len(sess.queued) == 3                        # restored once
+
+
+def test_stop_locate_reboots_and_restores_the_report_interval():
+    from superlink.bridge.events import Locate, StopLocate
+    core, _, sess = _adopted_core()
+    core.submit(Locate(mac=MAC))
+    _confirm_locate(core, sess, 10.0)
+    core.submit(StopLocate(mac=MAC))
+    assert [b[0] for b in sess.queued[2:]] == [6, 14]   # REBOOT, PROPERTY_SET
+    assert sess.queued[-1][2:] == bytes([13, 0, 0x01, 0x2C])
+    n = len(sess.queued)
+    core.tick(1000.0)
+    assert len(sess.queued) == n                        # no second restore
+
+
+def test_stop_locate_when_not_locating_sends_nothing():
+    """A reboot queued after the flashing ended would fire minutes later."""
+    from superlink.bridge.events import StopLocate
+    core, _, sess = _adopted_core()
+    core.submit(StopLocate(mac=MAC))
+    assert sess.queued == []
+
+
+def test_fast_reporting_without_a_locate_is_put_back():
+    """A bridge restart mid-locate would otherwise leave the sensor reporting
+    every 5 s until someone noticed the battery."""
+    core, _, sess = _adopted_core()
+    for seconds in (100, 400, 405):
+        sess.to_emit = [_uptime(seconds)]
+        core.feed(UNKNOWN_FRAME, channel=1, now=float(seconds))
+    assert len(sess.queued) == 1
+    assert sess.queued[0][2:] == bytes([13, 0, 0x01, 0x2C])
+
+
+def test_fast_reporting_during_a_locate_is_left_alone():
+    from superlink.bridge.events import Locate
+    core, _, sess = _adopted_core()
+    core.submit(Locate(mac=MAC))
+    for seconds in (100, 105, 110):
+        sess.to_emit = [_uptime(seconds)]
+        core.feed(UNKNOWN_FRAME, channel=1, now=float(seconds))
+    assert len(sess.queued) == 2

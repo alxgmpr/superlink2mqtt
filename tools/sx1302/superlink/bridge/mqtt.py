@@ -14,12 +14,14 @@ from .entities import (
 from .events import (
     Event, PropertyEvent, DeviceDiscovered, DeviceStateEvent,
     ButtonPressed, LinkSignal, SetProperty, SetPropertyRaw, AdoptDevice, Locate,
+    StopLocate,
     Reboot, RequestDeviceInfo, FactoryReset, DeviceRemoved,
 )
 
 # Command-button name -> factory building the Action from a device MAC.
 _BUTTON_ACTIONS = {
     "locate": lambda mac: Locate(mac=mac),
+    "stop_locate": lambda mac: StopLocate(mac=mac),
     "reboot": lambda mac: Reboot(mac=mac),
     "refresh": lambda mac: RequestDeviceInfo(mac=mac),
     # "Clear tamper" = PROPERTY_SET TAMPER_CLEAR(id22)=1 (mirrors the UniFi

@@ -10,7 +10,7 @@ SuperLink is Ubiquiti's proprietary LoRa-based sub-GHz sensor protocol. This pro
 
 - **Pairing** from a web UI. Sensors get fresh keys; nothing is needed from a UniFi console.
 - **Entities**: door, motion, leak, tamper, glass break, smoke, temperature, humidity, ambient light, battery (% and volts), signal, button-press events, LED switch.
-- **Commands**: locate, refresh, reboot, clear tamper, factory reset / unpair.
+- **Commands**: start/stop locate, refresh, reboot, clear tamper, factory reset / unpair.
 - **Recovery**: keys persist across restarts; radio and broker outages retry in the background.
 
 Status: door, tamper, battery, signal and button are verified against real hardware. The other entity types are mapped from the firmware's property table and have not been tested on a physical sensor. US 915 MHz channel plan only.

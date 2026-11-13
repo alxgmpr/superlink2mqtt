@@ -16,7 +16,7 @@ from .config import RuntimeConfig
 from .core import BridgeCore, InvalidCommand
 from .events import (
     Event, DeviceDiscovered, DeviceStateEvent, PropertyEvent, DeviceInfoEvent,
-    AdoptDevice, SetPropertyRaw, DeviceRemoved,
+    AdoptDevice, SetPropertyRaw, DeviceRemoved, CommandStatus,
 )
 from .profiles import ProfileRegistry
 from .session import DeviceSession
@@ -99,6 +99,9 @@ class BridgeRuntime:
                 self.store.delete(event.mac)
                 log.info("removed stale record for re-discovered %s",
                          event.mac.hex())
+        elif isinstance(event, CommandStatus):
+            log.info("%s command tag=%d status=%d", event.mac.hex(),
+                     event.message_tag, event.status_code)
         elif isinstance(event, (PropertyEvent, DeviceInfoEvent)):
             self._log_and_csv(event)
             # A DEVICE_INFO_REPORT is when the session learns prop_sizes; persist

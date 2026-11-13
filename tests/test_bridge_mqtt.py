@@ -190,6 +190,26 @@ def test_refresh_button_requests_device_info():
     assert got[0].mac == MAC
 
 
+def test_button_press_stop_locate_submits_action():
+    from superlink.bridge.events import StopLocate
+    rt, client, bridge = _bridge()
+    got = []
+    rt.submit_action = got.append
+    bridge.start()
+    bridge._on_message(f"superlink/{MH}/stop_locate/press", "PRESS")
+    assert got == [StopLocate(mac=MAC)]
+
+
+def test_locate_buttons_are_named_start_and_stop():
+    from superlink.bridge.events import DeviceStateEvent
+    rt, client, bridge = _bridge()
+    bridge.start()
+    bridge.on_event(DeviceStateEvent(mac=MAC, state="adopted"))
+    names = {n: json.loads(client.find(f"homeassistant/button/{MH}_{n}/config"))["name"]
+             for n in ("locate", "stop_locate")}
+    assert names == {"locate": "Start locate", "stop_locate": "Stop locate"}
+
+
 def test_buttons_discovery_published_on_adopt():
     from superlink.bridge.events import DeviceStateEvent
     rt, client, bridge = _bridge()

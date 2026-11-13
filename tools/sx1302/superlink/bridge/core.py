@@ -7,13 +7,27 @@ from typing import Callable, Protocol
 from ..decoder import parse_frame
 from .events import (
     Event, Action, AdoptDevice, DeviceDiscovered, DeviceStateEvent,
-    CommandStatus, DeviceRemoved, FactoryReset,
+    CommandStatus, DeviceRemoved, FactoryReset, Locate, StopLocate,
+    PropertyEvent, Reboot, SetPropertyRaw,
 )
 from .mapping import action_to_body
 from .profiles import ProfileRegistry
 from .store import DeviceStore, DeviceRecord
 
 log = logging.getLogger("superlink.core")
+
+# One LOCATE flashes the LED for about a minute, then the sensor stops by
+# itself (measured on usl-entry fw 1.2.0; Protect's UI says 30 s).
+LOCATE_SECONDS = 60
+# Commands only reach a sensor right after one of its uplinks. While locating,
+# the bridge drops REPORT_INTERVAL to this so a Stop lands within seconds
+# instead of waiting out the normal 300 s cadence.
+LOCATE_POLL_S = 5
+# A queued LOCATE waits for the sensor's next uplink, up to a full report
+# interval away. Give up holding the locate state if it never confirms.
+LOCATE_DELIVERY_S = 900
+REPORT_INTERVAL_ID = 13
+DEFAULT_REPORT_INTERVAL_S = 300
 
 
 @dataclass
@@ -57,6 +71,14 @@ class BridgeCore:
         # sensor answers in a later window, so the teardown is event-driven:
         # only a tag-matched status with code 0 removes the device.
         self._pending_reset: dict[bytes, int] = {}
+        # mac -> time the sensor's own locate timeout ends; present only while
+        # the bridge holds that sensor on the fast report interval.
+        self._locating: dict[bytes, float] = {}
+        # mac -> messageTag of a LOCATE the sensor has not confirmed yet. Its
+        # status reply is when the flashing (and the 60 s clock) starts.
+        self._locate_tag: dict[bytes, int] = {}
+        self._last_uptime: dict[bytes, int] = {}
+        self._now = 0.0
         for record in store.load_all():
             self._sessions[record.mac] = session_factory(record)
 
@@ -83,6 +105,7 @@ class BridgeCore:
     def feed(self, raw: bytes, channel: int, now: float,
              rssi: float | None = None, snr: float | None = None
              ) -> list[OutgoingFrame]:
+        self._now = now
         frame = parse_frame(raw)
         if frame is None:
             return []
@@ -98,6 +121,7 @@ class BridgeCore:
             # a ghost entity nothing will ever retract.
             self._emit(events)
             self._intercept(events)
+            self._watch_report_interval(events)
             return list(frames)
         if mac in self._discovered:
             return []  # already announced; awaiting AdoptDevice / auto_adopt
@@ -150,7 +174,65 @@ class BridgeCore:
         log.info("removed device %s (%s)", mac.hex(), reason)
         self._emit([DeviceRemoved(mac=mac, reason=reason)])
 
+    def _report_interval(self, mac: bytes, seconds: int) -> SetPropertyRaw:
+        return SetPropertyRaw(mac=mac, property_id=REPORT_INTERVAL_ID,
+                              channel=0, raw=seconds.to_bytes(2, "big"))
+
+    def _normal_report_interval(self, mac: bytes) -> SetPropertyRaw:
+        """The interval the bridge configured at adoption (profiles.yaml)."""
+        for pid, ch, raw in self.profiles.post_adoption(None):
+            if pid == REPORT_INTERVAL_ID:
+                return SetPropertyRaw(mac=mac, property_id=pid, channel=ch, raw=raw)
+        return self._report_interval(mac, DEFAULT_REPORT_INTERVAL_S)
+
+    def _expand(self, action: Action) -> list[Action]:
+        """Locate start/stop are several commands on the wire."""
+        mac = action.mac
+        if isinstance(action, Locate):
+            self._locating[mac] = self._now + LOCATE_DELIVERY_S
+            return [self._report_interval(mac, LOCATE_POLL_S), action]
+        if isinstance(action, StopLocate):
+            if mac not in self._locating:
+                # Nothing to stop, and a reboot queued now would land minutes
+                # later on the next uplink for no visible reason.
+                log.info("%s is not locating; stop ignored", mac.hex())
+                return []
+            # The protocol has no stop message (Protect 7.4.96 sends LOCATE
+            # once and lets it time out) and fw 1.2.0 rejects LED_PATTERN(61),
+            # so the one thing known to end the flashing is a reboot. The
+            # sensor reconnects by itself about 30 s later.
+            del self._locating[mac]
+            self._locate_tag.pop(mac, None)
+            return [Reboot(mac=mac), self._normal_report_interval(mac)]
+        return [action]
+
+    def _watch_report_interval(self, events) -> None:
+        """Put a sensor back on its normal interval if it reports at the
+        locate rate while no locate is running (bridge restarted mid-locate,
+        or the restore command was lost)."""
+        for ev in events:
+            if (isinstance(ev, CommandStatus)
+                    and self._locate_tag.get(ev.mac) == ev.message_tag):
+                del self._locate_tag[ev.mac]
+                self._locating[ev.mac] = self._now + LOCATE_SECONDS
+            if not (isinstance(ev, PropertyEvent) and ev.name == "UPTIME"
+                    and isinstance(ev.value, int)):
+                continue
+            last = self._last_uptime.get(ev.mac)
+            self._last_uptime[ev.mac] = ev.value
+            if (last is not None and ev.mac not in self._locating
+                    and 0 < ev.value - last <= 2 * LOCATE_POLL_S):
+                log.info("%s still on the locate report interval; restoring",
+                         ev.mac.hex())
+                self.submit(self._normal_report_interval(ev.mac))
+
     def tick(self, now: float) -> list[OutgoingFrame]:
+        self._now = now
+        for mac, until in list(self._locating.items()):
+            if now >= until:
+                del self._locating[mac]
+                self._locate_tag.pop(mac, None)
+                self.submit(self._normal_report_interval(mac))
         out: list[OutgoingFrame] = []
         for mac, session in list(self._sessions.items()):
             frames, events = session.tick(now)
@@ -167,6 +249,12 @@ class BridgeCore:
         session = self._sessions.get(action.mac)
         if session is None:
             return
+        for step in self._expand(action):
+            self._queue(session, step)
+            if isinstance(step, Locate):
+                self._locate_tag[step.mac] = self._cmd_tag
+
+    def _queue(self, session, action: Action) -> None:
         tag = (self._cmd_tag % 0xFF) + 1  # 1..255, never 0
         try:
             body = action_to_body(action, self.profiles, tag=tag)

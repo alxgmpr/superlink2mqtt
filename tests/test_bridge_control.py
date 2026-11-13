@@ -27,7 +27,7 @@ def sock_path():
 from superlink.bridge.control import parse_control_line, ControlSocket, send_command
 from superlink.bridge.events import (
     RequestDeviceInfo, RequestProperty, SetProperty, SetPropertyRaw,
-    Locate, Reboot, FactoryReset, Ping,
+    Locate, StopLocate, Reboot, FactoryReset, Ping,
 )
 
 MAC = bytes.fromhex("9041B22E9A53")
@@ -42,6 +42,10 @@ def test_device_info():
 
 def test_locate():
     assert parse_control_line("locate", MAC) == Locate(mac=MAC)
+
+
+def test_stop_locate():
+    assert parse_control_line("stop_locate", MAC) == StopLocate(mac=MAC)
 
 
 def test_reboot():

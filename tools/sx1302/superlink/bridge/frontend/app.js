@@ -336,7 +336,8 @@ function fillDialog() {
     d.state === "discovered" && !d.has_session
       ? [["adopt", "Pair", "filled"]]
       : [
-          ["locate", "Locate"],
+          ["locate", "Start locate"],
+          ["stop_locate", "Stop locate"],
           ["refresh", "Refresh info"],
           ["reboot", "Reboot", "danger"],
         ];

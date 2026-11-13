@@ -130,7 +130,8 @@ authentication. Do not enter an HA long-lived token into the standalone form.
 | `GET /api/state` | Sanitized device snapshot, MQTT connection and activity |
 | `POST /api/devices/<mac>/command` | Submit `{ "command": "locate" }` |
 
-Commands are `adopt`, `locate`, `refresh` and `reboot`. Adoption targets an
+Commands are `adopt`, `locate` (start), `stop_locate`, `refresh` and `reboot`.
+`stop_locate` reboots the sensor, the only way this firmware ends a locate early. Adoption targets an
 individually discovered sensor without an existing session. Web command success
 means queued for delivery, not physical execution. Later sensor responses show
 their message tag and status in Activity; the UI does not claim a response is

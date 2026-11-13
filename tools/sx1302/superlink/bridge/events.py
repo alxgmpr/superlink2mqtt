@@ -133,6 +133,11 @@ class Locate(Action):
 
 
 @dataclass(frozen=True)
+class StopLocate(Action):
+    mac: bytes
+
+
+@dataclass(frozen=True)
 class Reboot(Action):
     mac: bytes
 

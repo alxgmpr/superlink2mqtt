@@ -153,5 +153,5 @@ def test_bad_mqtt_action_cannot_kill_polling_or_block_next_command():
     queued = []
     rt._sessions[MAC].queue_body = queued.append
     rt.poll_once(100)
-    assert len(queued) == 1
+    assert [b[0] for b in queued] == [14, 8]   # REPORT_INTERVAL, LOCATE
     assert rt._action_queue.empty()

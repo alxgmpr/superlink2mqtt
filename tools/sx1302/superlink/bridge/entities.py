@@ -25,7 +25,10 @@ ENTITY_MAP: dict[str, dict] = {
 # Command buttons exposed per adopted device. Each maps a press to a bridge
 # Action (wired in mqtt.py). name -> HA button metadata.
 COMMAND_BUTTONS: dict[str, dict] = {
-    "locate":  {"name": "Locate", "icon": "mdi:map-marker-radius"},
+    # `locate` keeps its key (topic + unique_id) so the existing HA entity is
+    # renamed in place rather than orphaned.
+    "locate":  {"name": "Start locate", "icon": "mdi:map-marker-radius"},
+    "stop_locate": {"name": "Stop locate", "icon": "mdi:map-marker-off"},
     "reboot":  {"name": "Reboot", "device_class": "restart", "icon": "mdi:restart"},
     "refresh": {"name": "Refresh info", "icon": "mdi:refresh"},
     "clear_tamper": {"name": "Clear tamper", "icon": "mdi:shield-refresh"},

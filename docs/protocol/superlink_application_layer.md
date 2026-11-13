@@ -128,6 +128,19 @@ Variable. 2-byte header + opaque `data: Buffer`. Used for liveness.
 
 Header only — 2 bytes, no payload.
 
+`LOCATE` flashes the LED and the sensor stops by itself: Protect's UI says 30 s,
+usl-entry fw 1.2.0 measured about 60 s. There is no stop message. Protect
+7.4.96 (`service.js`) still encodes `LOCATE` header-only and its sensor panel
+has a single Locate button; "Stop Locate" exists only for LCM devices and
+Thread locks. A newer `LED_PATTERN` property (id 61: `NONE=0`, `LOCATE=1`,
+`PIN_FAIL=2`) is used for keypads; usl-entry fw 1.2.0 does not advertise it and
+answers `PROPERTY_SET 61=0` with status 1 (hardware, 2026-11-13).
+
+superlink2mqtt's Start locate sets `REPORT_INTERVAL` to 5 s and then sends
+`LOCATE`, so a later command reaches the sensor within seconds. Stop locate
+sends `REBOOT` and restores the interval; the one-minute timeout restores it
+too.
+
 `FACTORY_RESET` unpairs the device. The messageTag MUST be non-zero — a `0700`
 body is silently ignored (no ACK, no reset; verified on hardware 2026-07-25).
 

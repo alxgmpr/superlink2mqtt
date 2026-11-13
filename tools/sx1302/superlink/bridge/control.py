@@ -11,7 +11,8 @@ Line grammar (whitespace-separated tokens, one command per line):
 
     device_info                       -> RequestDeviceInfo
     ping [HEXDATA]                    -> Ping
-    locate                            -> Locate
+    locate                            -> Locate (start flashing)
+    stop_locate                       -> StopLocate
     reboot                           -> Reboot
     factory_reset                    -> FactoryReset (unpairs; bridge forgets
                                         the device once the sensor confirms)
@@ -32,7 +33,7 @@ from typing import Callable
 
 from .events import (
     Action, RequestDeviceInfo, RequestProperty, SetProperty, SetPropertyRaw,
-    Locate, Reboot, FactoryReset, Ping,
+    Locate, StopLocate, Reboot, FactoryReset, Ping,
 )
 
 log = logging.getLogger("superlink.control")
@@ -76,6 +77,8 @@ def parse_control_line(line: str, default_mac: bytes | None) -> Action:
         return RequestDeviceInfo(mac=mac)
     if cmd == "locate":
         return Locate(mac=mac)
+    if cmd == "stop_locate":
+        return StopLocate(mac=mac)
     if cmd == "reboot":
         return Reboot(mac=mac)
     if cmd == "factory_reset":

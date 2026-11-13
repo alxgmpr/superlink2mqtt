@@ -3,7 +3,7 @@ from collections import deque
 import time
 
 from .events import (AdoptDevice, CommandStatus, DeviceDiscovered, DeviceInfoEvent,
-                     DeviceRemoved, DeviceStateEvent, LinkSignal, Locate,
+                     DeviceRemoved, DeviceStateEvent, LinkSignal, Locate, StopLocate,
                      PropertyEvent, Reboot, RequestDeviceInfo)
 from .importing import parse_mac
 
@@ -89,7 +89,7 @@ class Management:
                 raise ValueError("Choose a discovered device without an existing session")
             action = AdoptDevice(mac)
         else:
-            commands = {"locate": Locate, "refresh": RequestDeviceInfo, "reboot": Reboot}
+            commands = {"locate": Locate, "stop_locate": StopLocate, "refresh": RequestDeviceInfo, "reboot": Reboot}
             if command not in commands:
                 raise ValueError("Unsupported command")
             if not self.runtime.core.has_session(mac):
@@ -99,5 +99,5 @@ class Management:
             action = commands[command](mac)
         self.runtime.core.submit(action)
         self.activity.appendleft({"time": time.time(), "mac": mac.hex(),
-                                  "message": f"{command.capitalize()} queued; waiting for sensor"})
+                                  "message": f"{command.replace('_', ' ').capitalize()} queued; waiting for sensor"})
         return {"state": "queued"}
