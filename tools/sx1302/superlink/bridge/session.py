@@ -295,8 +295,11 @@ class DeviceSession:
         if the sensor is gone it times out to BEACONING like any other."""
         self._privkey, self._pubkey = generate_keypair()
         resumed = self._state is State.IDLE and self.session_key is not None
-        self._state = State.ACTIVE if resumed else State.BEACONING
-        self._resume_unconfirmed = resumed
+        if resumed:
+            self._state = State.ACTIVE
+            self._resume_unconfirmed = True
+        else:
+            self._enter_beaconing()
         self._mgmt_counter = self.mgmt_counter_start
         self._last_beacon_time = now
         self._last_data_rx = now
@@ -373,8 +376,7 @@ class DeviceSession:
             log.info("link lost: no telemetry for %.0fs — dropping to BEACONING "
                      "(will re-handshake on next discovery)",
                      now - self._last_data_rx)
-            self._state = State.BEACONING
-            self.session_key = None
+            self._enter_beaconing()
             if self.sensor_mac:
                 events.append(DeviceStateEvent(mac=self.sensor_mac, state="lost"))
             # Storm accounting: too many losses in the window without recovery
@@ -421,9 +423,7 @@ class DeviceSession:
         next full 0x40; it does NOT force a silent sensor to reconnect (recovery is
         sensor-driven — see the watchdog note in __init__)."""
         self._privkey, self._pubkey = generate_keypair()
-        self._state = State.BEACONING
-        self.session_key = None
-        self._remote_pubkey = None
+        self._enter_beaconing()
         self._last_data_rx = now
         self._last_beacon_time = now
         self._short_challenge_count = 0
@@ -433,6 +433,18 @@ class DeviceSession:
         # starts clean (mirrors a from-record rebuild).
         self._mgmt_counter = self.mgmt_counter_start
         self._post_pair_n = 0
+
+    def _enter_beaconing(self) -> None:
+        """The one way into BEACONING: no session exists there, so everything
+        that belongs to a session goes. Callers add only what is specific to
+        their reason for leaving (new keypair, timers, adoption)."""
+        self._state = State.BEACONING
+        self.session_key = None
+        self._remote_pubkey = None
+        self._resume_unconfirmed = False
+        self._dl_ctr = 0
+        self._dl_seq = 0
+        self._dl_unacked = False
 
     def to_record(self) -> DeviceRecord:
         """Snapshot the session's persistent state into a DeviceRecord."""
@@ -455,9 +467,9 @@ class DeviceSession:
 
     def _live_session(self) -> dict:
         """Record fields for the live session. Only an ACTIVE session, or one
-        restored and not yet started (IDLE), has one; BEACONING never does even
-        when a stale session_key is still set."""
-        if self._state is State.BEACONING or self.session_key is None:
+        restored and not yet started (IDLE), has one; _enter_beaconing clears
+        the key."""
+        if self.session_key is None:
             return {}
         return {"session_key": self.session_key, "dl_ctr": self._dl_ctr,
                 "dl_seq": self._dl_seq, "dl_unacked": self._dl_unacked}
@@ -613,8 +625,7 @@ class DeviceSession:
                 self._kdf_context = self.pairing_key
                 self._kdf_context_explicit = False
                 self._transport_key = self.pairing_key
-                self.session_key = None
-                self._state = State.BEACONING
+                self._enter_beaconing()
                 return frame, [], [DeviceStateEvent(mac=frame.mac,
                                                     state="discovered")]
             if self._resume_unconfirmed and is_discovery_ad(frame.payload):
@@ -623,9 +634,7 @@ class DeviceSession:
                 log.info("discovery from %s before the resumed session was "
                          "confirmed - dropping it and re-handshaking",
                          format_mac(frame.mac))
-                self._resume_unconfirmed = False
-                self._state = State.BEACONING
-                self.session_key = None
+                self._enter_beaconing()
                 return self._handle_beaconing(frame, channel, now)
             # Ordinary reconnect 0x40 — leave it to the liveness timeout to drop
             # to BEACONING; ignore here (per-0x40 re-handshake loops the sensor).
@@ -769,7 +778,7 @@ class DeviceSession:
             # stashed; the swap happens in _handle_beaconing's 0x40 handler.
             self._adoption = Adoption.COMMIT_PENDING
             self._privkey, self._pubkey = generate_keypair()
-            self._state = State.BEACONING
+            self._enter_beaconing()
             log.info("ADOPT round-trip done; stashed primary=%s fallback=%s; "
                      "awaiting adopted-form 0x40 (commit) before rotating",
                      self._derived_addDevice_key[:8].hex(),

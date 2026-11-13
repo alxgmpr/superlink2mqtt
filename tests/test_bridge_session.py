@@ -674,13 +674,12 @@ def test_bad_mic_0x42_in_active_ignored():
 # The live session (key + DL counters) is therefore part of the record.
 
 def test_record_carries_live_session_only_while_active():
-    from superlink.bridge.session import State
     s = _active_data_session()
     s._dl_ctr, s._dl_seq, s._dl_unacked = 3, 12, True
     rec = s.to_record()
     assert (rec.session_key, rec.dl_ctr, rec.dl_seq, rec.dl_unacked) == \
         (s.session_key, 3, 12, True)
-    s._state = State.BEACONING          # e.g. adopt round-trip leaves the key set
+    s._enter_beaconing()
     assert s.to_record().session_key is None
 
 
@@ -747,3 +746,31 @@ def test_discovery_after_resume_confirmed_is_still_ignored():
     frames, _ = after.feed(_craft_discovery_frame(ADOPTED_DISCOVERY_PAYLOAD),
                            channel=1, now=1001.0)
     assert frames == [] and after._state == State.ACTIVE
+
+
+def test_every_drop_to_beaconing_clears_the_whole_session():
+    """Link-lost used to clear only the key; the other session fields survived
+    into BEACONING. Every path now goes through _enter_beaconing."""
+    from superlink.bridge.session import State
+
+    def session_fields(s):
+        return (s._state, s.session_key, s._remote_pubkey,
+                s._resume_unconfirmed, s._dl_ctr, s._dl_seq, s._dl_unacked)
+
+    def dirty():
+        s = _active_data_session(link_lost_timeout=60.0)
+        s._remote_pubkey = b"\x05" * 32
+        s._resume_unconfirmed = True
+        s._dl_ctr, s._dl_seq, s._dl_unacked = 3, 4, True
+        return s
+
+    clean = (State.BEACONING, None, None, False, 0, 0, False)
+    lost = dirty()
+    lost.tick(now=lost._last_data_rx + 61.0)
+    rearmed = dirty()
+    rearmed._rearm(now=0.0)
+    restarted = dirty()
+    restarted.start(now=0.0)
+    assert session_fields(lost) == clean
+    assert session_fields(rearmed) == clean
+    assert session_fields(restarted) == clean

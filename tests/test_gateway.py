@@ -447,13 +447,15 @@ def test_active_0x03_decodes_and_derives_addDevice_keys():
     raw = build_frame(0xE0, 0x54, SENSOR_MAC, 0x01, 0x00,
                       mic, body, session.session_key, counter=1)
 
+    adopt_key = session.session_key   # dropped with the session on the commit
     _, tx_raw, tx_freq = session.handle_rx(raw, ul_channel=1)
+    assert session.session_key is None
     # ADOPT_RESPONSE is answered with the real-bridge commit ack: a single
     # 0x63 REQUEST_STATUS_RESPONSE(status=OK) body `01 00` (ground truth,
     # bridge_adopt_fresh_pass2_20260722.log) — NOT a 0x74 PROPERTY_SET.
     from superlink.decoder import parse_frame, decrypt_frame
     assert tx_raw is not None and tx_freq > 0
-    confirm = decrypt_frame(parse_frame(tx_raw), session.session_key,
+    confirm = decrypt_frame(parse_frame(tx_raw), adopt_key,
                             dl_counter=0)
     assert confirm.dctrl == 0x63
     assert confirm.payload == bytes([0x01, 0x00])
