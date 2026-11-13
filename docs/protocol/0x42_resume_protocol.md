@@ -59,7 +59,7 @@ healthy session spontaneously.
 
 ## Open / next
 
-- ACTIVE fast-path (added 2026-11-13, unit-tested, **not yet HW-verified**):
+- ACTIVE fast-path (added 2026-11-13, HW-verified the same day, see below):
   `_reconnect_in_active` handles an in-ACTIVE `0x42` instead of waiting out
   link-lost. A resume (`01 00`) gets a ConnRsp and the session is kept. A full
   challenge replaces the session only when its MIC verifies and its inner blob
@@ -68,6 +68,12 @@ healthy session spontaneously.
   "re-handshake on every 0x40" fix loop. Trigger: a REBOOT command under a live
   session (HW 2026-11-12: ~60 ignored `0x42`s, sensor dormant before the 700s
   link-lost fired).
+  HW result (sensor 9041b22e9a53, REBOOT sent under a live session): the sensor
+  sent one resume, got the ConnRsp (gateway keypair reused, not regenerated),
+  replied with a full challenge, and telemetry resumed at uptime 6 s — about
+  30 s from the command to the first report, with no `0x42` ignored and no
+  link-lost. So after a reboot the sensor sends a resume first, and it accepts
+  a ConnRsp carrying the existing gateway pubkey.
 - The `0a 00 02` middle of the ConnRsp is copied from capture; `0a` is plausibly
   a random 0..63. The resume ConnRsp reuses the same hardcoded bytes and the
   current keypair (we do not regenerate, unlike the firmware — not required for
