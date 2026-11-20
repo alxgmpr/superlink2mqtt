@@ -138,8 +138,9 @@ answers `PROPERTY_SET 61=0` with status 1 (hardware, 2026-11-13).
 
 superlink2mqtt's Start locate sets `REPORT_INTERVAL` to 5 s and then sends
 `LOCATE`, so a later command reaches the sensor within seconds. Stop locate
-sends `REBOOT` and restores the interval; the one-minute timeout restores it
-too.
+sets `LED_ENABLED` (id 14) to 0, which ends the flashing (hardware,
+2026-11-20). When the sensor's locate timeout has passed (the bridge waits 90 s) it
+sets `LED_ENABLED` back to 1 and restores the interval.
 
 `FACTORY_RESET` unpairs the device. The messageTag MUST be non-zero — a `0700`
 body is silently ignored (no ACK, no reset; verified on hardware 2026-07-25).

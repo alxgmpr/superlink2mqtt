@@ -306,25 +306,65 @@ def test_locate_clock_starts_when_the_sensor_confirms_not_at_the_press():
     core.tick(390.0)                                    # still undelivered
     assert len(sess.queued) == 2
     _confirm_locate(core, sess, 400.0)
-    core.tick(459.0)
+    core.tick(489.0)
     assert len(sess.queued) == 2                        # still flashing
-    core.tick(460.0)
+    core.tick(490.0)
     assert sess.queued[2][2:] == bytes([13, 0, 0x01, 0x2C])   # 300 s
-    core.tick(461.0)
+    core.tick(491.0)
     assert len(sess.queued) == 3                        # restored once
 
 
-def test_stop_locate_reboots_and_restores_the_report_interval():
+def test_stop_locate_disables_the_led_until_the_locate_timeout_passes():
+    """LED_ENABLED(14)=0 ends the flashing. The LED comes back on, and the
+    report interval back to normal, once the sensor's own timeout is over."""
     from superlink.bridge.events import Locate, StopLocate
     core, _, sess = _adopted_core()
     core.submit(Locate(mac=MAC))
     _confirm_locate(core, sess, 10.0)
     core.submit(StopLocate(mac=MAC))
-    assert [b[0] for b in sess.queued[2:]] == [6, 14]   # REBOOT, PROPERTY_SET
-    assert sess.queued[-1][2:] == bytes([13, 0, 0x01, 0x2C])
-    n = len(sess.queued)
+    assert sess.queued[2][2:] == bytes([14, 0, 0])      # LED off, nothing else
+    assert len(sess.queued) == 3
+    core.tick(99.0)
+    assert len(sess.queued) == 3
+    core.tick(100.0)
+    assert [b[2:] for b in sess.queued[3:]] == [bytes([14, 0, 1]),
+                                                bytes([13, 0, 0x01, 0x2C])]
     core.tick(1000.0)
-    assert len(sess.queued) == n                        # no second restore
+    assert len(sess.queued) == 5
+
+
+def test_led_on_is_resent_until_the_sensor_reports_it_on():
+    """The sensor answers a write with the value from before it, so the
+    first reply to LED on still reads off."""
+    from superlink.bridge.events import Locate, StopLocate
+    def led(value):
+        return PropertyEvent(mac=MAC, property_id=14, name="LED_ENABLED",
+                             channel=0, raw=bytes([value]), value=value,
+                             unit=None, decoded=True)
+    core, _, sess = _adopted_core()
+    core.submit(Locate(mac=MAC))
+    _confirm_locate(core, sess, 10.0)
+    core.submit(StopLocate(mac=MAC))
+    core.tick(100.0)
+    n = len(sess.queued)
+    sess.to_emit = [led(False)]
+    core.feed(UNKNOWN_FRAME, channel=1, now=101.0)
+    assert sess.queued[n][2:] == bytes([14, 0, 1])      # asked again
+    sess.to_emit = [led(True)]
+    core.feed(UNKNOWN_FRAME, channel=1, now=102.0)
+    sess.to_emit = [led(False)]                         # user's own switch-off
+    core.feed(UNKNOWN_FRAME, channel=1, now=103.0)
+    assert len(sess.queued) == n + 1
+
+
+def test_start_after_stop_turns_the_led_back_on_first():
+    from superlink.bridge.events import Locate, StopLocate
+    core, _, sess = _adopted_core()
+    core.submit(Locate(mac=MAC))
+    core.submit(StopLocate(mac=MAC))
+    core.submit(Locate(mac=MAC))
+    assert sess.queued[3][2:] == bytes([14, 0, 1])
+    assert sess.queued[5][0] == 8
 
 
 def test_stop_locate_when_not_locating_sends_nothing():
