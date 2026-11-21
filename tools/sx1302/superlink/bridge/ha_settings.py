@@ -53,26 +53,26 @@ FIELDS = {
          "help": "The identity sensors pair with. Changing it disconnects paired sensors until you pair them again."},
         {"name": "pairing_key", "label": "Pairing key", "type": "password", "placeholder": "Factory default",
          "help": "32 bytes as 64 hex digits. Factory-reset sensors only pair with the factory default. Leave blank to keep the current key."},
-        {"name": "use_default_key", "label": "Use the factory default pairing key", "type": "checkbox"},
-        {"name": "allow_repair", "label": "Allow changes that need sensors to be paired again", "type": "checkbox"},
         {"name": "auto_pair", "label": "Pair new sensors", "type": "select",
          "choices": [["manual", "When I choose Pair"], ["all", "Automatically, any sensor in pairing mode"],
                      ["list", "Automatically, only the sensors listed"]]},
         {"name": "auto_pair_macs", "label": "Sensor MACs to pair automatically", "required": True, "when": {"auto_pair": "list"},
-         "placeholder": "aa:bb:cc:dd:ee:ff, …", "help": "Separate MACs with commas or spaces."},
+         "placeholder": "AA:BB:CC:DD:EE:FF, …", "help": "Separate MACs with commas or spaces."},
+        {"name": "use_default_key", "label": "Use the factory default pairing key", "type": "checkbox", "advanced": True},
+        {"name": "allow_repair", "label": "Allow changes that need sensors to be paired again", "type": "checkbox", "advanced": True},
         {"name": "log_level", "label": "Log level", "type": "select", "advanced": True,
          "choices": [["DEBUG", "Debug"], ["INFO", "Info"], ["WARNING", "Warning"], ["ERROR", "Error"]]},
         {"name": "invert_iq", "label": "Invert downlink IQ", "type": "checkbox", "advanced": True},
         {"name": "downlink_delay_us", "label": "Downlink delay (µs)", "type": "number", "min": 0, "max": 10_000_000,
-         "required": True, "advanced": True, "help": f'Time from an uplink to the reply. Default {DEFAULTS["downlink_delay_us"]}.'},
+         "required": True, "advanced": True, "help": f'Time from an uplink to the reply; {DEFAULTS["downlink_delay_us"]} by default.'},
         {"name": "burst_spacing_us", "label": "Burst spacing (µs)", "type": "number", "min": 0, "max": 5_000_000,
-         "required": True, "advanced": True, "help": f'Gap between frames in one reply. Default {DEFAULTS["burst_spacing_us"]}.'},
+         "required": True, "advanced": True, "help": f'Gap between frames in one reply; {DEFAULTS["burst_spacing_us"]} by default.'},
         {"name": "link_lost_timeout", "label": "Link-lost timeout (s)", "type": "number", "min": 60, "max": 86400,
-         "required": True, "advanced": True, "help": f'Silence before a sensor shows as disconnected. Default {DEFAULTS["link_lost_timeout"]:g}.'},
+         "required": True, "advanced": True, "help": f'Silence before a sensor shows as disconnected; {DEFAULTS["link_lost_timeout"]:g} by default.'},
         {"name": "watchdog_timeout", "label": "Watchdog timeout (s)", "type": "number", "min": 0, "max": 86400,
-         "required": True, "advanced": True, "help": f'Silence before the bridge forces a reconnect. 0 turns it off. Default {DEFAULTS["watchdog_timeout"]:g}.'},
+         "required": True, "advanced": True, "help": f'Silence before the bridge forces a reconnect; {DEFAULTS["watchdog_timeout"]:g} by default, 0 turns it off.'},
         {"name": "watchdog_short_challenge_k", "label": "Watchdog rejected-reconnect limit", "type": "number", "min": 0, "max": 100,
-         "required": True, "advanced": True, "help": f'Rejected reconnects before the watchdog acts. 0 turns it off. Default {DEFAULTS["watchdog_short_challenge_k"]}.'},
+         "required": True, "advanced": True, "help": f'Rejected reconnects before the watchdog acts; {DEFAULTS["watchdog_short_challenge_k"]} by default, 0 turns it off.'},
     ],
 }
 
@@ -103,10 +103,14 @@ def atomic_write(path, content):
             os.unlink(temporary)
 
 
-def mac_hex(value):
-    """Accept aa:bb:cc:dd:ee:ff / aa-bb-… / aabbccddeeff; return bare lowercase hex or None."""
-    value = value.replace(":", "").replace("-", "").lower()
-    return value if re.fullmatch(r"[0-9a-f]{12}", value) else None
+def mac_label(value):
+    """Accept aa:bb:cc:dd:ee:ff / aa-bb-… / aabbccddeeff; return AA:BB:CC:DD:EE:FF (as the UI shows MACs) or None."""
+    value = value.replace(":", "").replace("-", "").upper()
+    return ":".join(re.findall("..", value)) if re.fullmatch(r"[0-9A-F]{12}", value) else None
+
+
+def mac_hex(label):
+    return label.replace(":", "").lower()
 
 
 def host_key(value):
@@ -177,14 +181,15 @@ class HASettings:
         network = {"gateway_mac": "", "pairing_key": str(base.get("pairing_key") or DEFAULT_KEY_HEX).lower(),
                    "use_default_key": False, "allow_repair": False,
                    "auto_pair": "all" if auto_all else "list" if adopt else "manual",
-                   "auto_pair_macs": "" if auto_all else ", ".join(adopt),
+                   "auto_pair_macs": "" if auto_all else ", ".join(mac_label(m) or m for m in adopt),
                    "log_level": (base.get("log") or {}).get("level", DEFAULTS["log_level"]),
                    "invert_iq": bool(base.get("invert_iq", DEFAULTS["invert_iq"]))}
         for name in ("downlink_delay_us", "burst_spacing_us", "link_lost_timeout", "watchdog_timeout", "watchdog_short_challenge_k"):
             network[name] = int(base.get(name, DEFAULTS[name]))
         network.update(doc.get("network", {}))
         # A saved override wins; otherwise the identity bridge.yaml or the radio save created.
-        network["gateway_mac"] = network["gateway_mac"] or base.get("gw_mac") or doc.get("gateway_mac", "")
+        inherited = base.get("gw_mac") or doc.get("gateway_mac", "")
+        network["gateway_mac"] = network["gateway_mac"] or mac_label(inherited) or inherited
         return {"radio": radio, "mqtt": mqtt, "network": network}
 
     def revision(self):
@@ -271,8 +276,8 @@ class HASettings:
 
     def validate_network(self, result, previous, values):
         if result["gateway_mac"] != previous["gateway_mac"]:
-            mac = mac_hex(result["gateway_mac"])
-            if mac is None or int(mac[:2], 16) & 1 or mac == "0" * 12:
+            mac = mac_label(result["gateway_mac"])
+            if mac is None or int(mac[:2], 16) & 1 or mac == "00:00:00:00:00:00":
                 raise ValueError("Enter the gateway MAC as 12 hex digits, for example 02:00:00:00:00:01.")
             result["gateway_mac"] = mac
         if result.pop("use_default_key"):
@@ -286,7 +291,7 @@ class HASettings:
         macs = []
         if result["auto_pair"] == "list":
             for part in re.split(r"[\s,]+", result["auto_pair_macs"].strip()):
-                mac = mac_hex(part)
+                mac = mac_label(part)
                 if mac is None:
                     raise ValueError(f"{part!r} is not a sensor MAC.")
                 macs.append(mac)
@@ -298,7 +303,7 @@ class HASettings:
             paired = sum(r.adopted for r in JsonDeviceStore(str(self.root / "devices.json")).load_all())
             if paired:
                 raise ValueError(f"{paired} paired sensor{'s' if paired > 1 else ''} would need to be paired again. "
-                                 "Choose Allow changes that need sensors to be paired again to continue.")
+                                 "Choose Allow changes that need sensors to be paired again under Advanced settings to continue.")
 
     def save(self, body):
         with self.lock:
@@ -368,9 +373,9 @@ def prepare(root, options_path, get_mqtt=mqtt_service):
         return None, ["bridge.yaml"]
     network = doc.get("network")
     if network:  # only once saved: an untouched section leaves today's config as is
-        config["gw_mac"] = network["gateway_mac"] or config["gw_mac"]
+        config["gw_mac"] = mac_hex(network["gateway_mac"]) or config["gw_mac"]
         config["pairing_key"] = network["pairing_key"]
-        config["adopt"] = {"manual": [], "all": "all", "list": network["auto_pair_macs"].split(", ")}[network["auto_pair"]]
+        config["adopt"] = {"manual": [], "all": "all", "list": [mac_hex(m) for m in network["auto_pair_macs"].split(", ")]}[network["auto_pair"]]
         config["log"] = {**(config.get("log") or {}), "level": network["log_level"]}
         for name in ("invert_iq", "downlink_delay_us", "burst_spacing_us", "link_lost_timeout", "watchdog_timeout", "watchdog_short_challenge_k"):
             config[name] = network[name]

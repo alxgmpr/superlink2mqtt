@@ -105,8 +105,9 @@ and under Advanced: log level, downlink IQ inversion and timing, and the
 link-lost and watchdog timeouts. Until you save this section the bridge uses
 `bridge.yaml` and built-in defaults; once saved, these values override the same
 keys in `bridge.yaml`. Changing the gateway MAC or pairing key while sensors are
-paired requires **Allow changes that need sensors to be paired again**, because
-those sensors stop connecting until they are paired again.
+paired requires **Allow changes that need sensors to be paired again** under
+Advanced settings, because those sensors stop connecting until they are paired
+again.
 
 ## Existing installations and manual provisioning
 

@@ -245,6 +245,8 @@ def test_network_overrides_reach_runtime_config(settings, radio):
     assert not missing and loaded.gw_mac.hex() == '021122334455' and loaded.pairing_key == bytes.fromhex(key)
     assert loaded.adopt == {bytes.fromhex('aabbccddee01'), bytes.fromhex('aabbccddee02')}
     assert loaded.log_level == 'DEBUG' and loaded.invert_iq and loaded.downlink_delay_us == 900000
+    shown = settings.snapshot()['values']['network']
+    assert shown['gateway_mac'] == '02:11:22:33:44:55' and shown['auto_pair_macs'] == 'AA:BB:CC:DD:EE:01, AA:BB:CC:DD:EE:02'
     assert loaded.watchdog_timeout == 0
     save(settings, 'network', {'auto_pair':'all', 'use_default_key':True})
     loaded = RuntimeConfig.load(_write(settings.root, prepare(settings.root, settings.options_path)[0]))
@@ -286,7 +288,7 @@ def test_identity_change_with_paired_sensors_needs_acknowledgement(settings, rad
             save(settings, 'network', patch)
         save(settings, 'network', {**patch, 'allow_repair':True})
     stored = settings.read()['network']
-    assert stored['gateway_mac'] == '020000000077' and 'allow_repair' not in stored and 'use_default_key' not in stored
+    assert stored['gateway_mac'] == '02:00:00:00:00:77' and 'allow_repair' not in stored and 'use_default_key' not in stored
 
 
 def test_network_mac_restores_identity_without_bridge_yaml(settings, radio):
@@ -305,7 +307,7 @@ def test_existing_bridge_yaml_values_are_shown_and_kept(settings, radio):
                                              '\ninvert_iq: true\nlog:\n  level: DEBUG\n  csv: /config/frames.csv\n')
     snapshot = settings.snapshot()
     network = snapshot['values']['network']
-    assert network['gateway_mac'] == '020000000099' and network['auto_pair'] == 'all' and network['invert_iq']
+    assert network['gateway_mac'] == '02:00:00:00:00:99' and network['auto_pair'] == 'all' and network['invert_iq']
     assert snapshot['pairing_key_set'] and network['log_level'] == 'DEBUG'
     save(settings, 'network', {'log_level':'INFO'})
     save(settings, 'mqtt', {'mode':'custom', 'host':'broker.invalid'})
