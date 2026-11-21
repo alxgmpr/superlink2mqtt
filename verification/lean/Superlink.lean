@@ -59,24 +59,32 @@ theorem frame_rejects_short_body (h : Header) (encrypted : List UInt8)
 -- Python's `n & 0xff` also wraps negative integers.
 def byte (n : Int) : UInt8 := UInt8.ofNat (n % 256).toNat
 
+-- Big-endian, low byte last: counter 256 is `... 01 00` (hardware, 2026-11-21).
+def counterBytes (n : Int) : List UInt8 :=
+  [7, 6, 5, 4, 3, 2, 1, 0].map fun i => byte (n / 256 ^ i)
+
 def nonce (h : Header) (counter : Int) : List UInt8 :=
-  h.bytes ++ List.replicate 13 0 ++ [byte counter]
+  h.bytes ++ List.replicate 6 0 ++ counterBytes counter
 
 theorem nonce_length (h : Header) (counter : Int) :
     (nonce h counter).length = 24 := by
-  simp [nonce, header_length]
+  simp [nonce, header_length, counterBytes]
 
 theorem nonce_preserves_header (h : Header) (counter : Int) :
     (nonce h counter).take 10 = h.bytes := by
   simp [nonce, Header.bytes]
 
 theorem nonce_padding (h : Header) (counter : Int) :
-    ((nonce h counter).drop 10).take 13 = List.replicate 13 0 := by
+    ((nonce h counter).drop 10).take 6 = List.replicate 6 0 := by
   simp [nonce, Header.bytes]
+
+theorem nonce_counter_bytes (h : Header) (counter : Int) :
+    (nonce h counter).drop 16 = counterBytes counter := by
+  simp [nonce, Header.bytes, List.replicate]
 
 theorem nonce_counter (h : Header) (counter : Int) :
     (nonce h counter).drop 23 = [byte counter] := by
-  simp [nonce, Header.bytes, List.replicate]
+  simp [nonce, Header.bytes, List.replicate, counterBytes]
 
 theorem nonce_equal_implies_header_equal (a b : Header) (ca cb : Int)
     (same : nonce a ca = nonce b cb) : a = b := by

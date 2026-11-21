@@ -774,3 +774,11 @@ def test_every_drop_to_beaconing_clears_the_whole_session():
     assert session_fields(lost) == clean
     assert session_fields(rearmed) == clean
     assert session_fields(restarted) == clean
+
+
+def test_data_counter_past_255_still_decodes():
+    # The UL nonce counter is big-endian ending at byte 23; past 255 a byte-23-
+    # only scan fails every frame. Cold scan (restart) and hinted scan both work.
+    s = _active_data_session()
+    assert s._scan_data_counter(_craft_data_frame(s.session_key, counter=300)) == 300
+    assert s._scan_data_counter(_craft_data_frame(s.session_key, counter=301)) == 301

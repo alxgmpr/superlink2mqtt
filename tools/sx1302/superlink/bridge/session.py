@@ -21,6 +21,7 @@ fed a decrypted app report, this class instead builds typed events via
 """
 
 import enum
+import itertools
 import logging
 import secrets
 import time
@@ -1001,20 +1002,25 @@ class DeviceSession:
 
         The MIC is BLAKE2b-32 over header(10B) || 4 zero bytes || plaintext, so
         for each candidate counter we decrypt and check the recomputed MIC
-        against the decrypted MIC. Returns the counter (0..255) or None.
+        against the decrypted MIC. Returns the counter or None. Scans up from
+        the last counter found, then from 0 (a re-handshake resets it).
         """
         if not _HAS_CRYPTO or not frame.encrypted or self.session_key is None:
             return None
         header = (bytes([frame.mctrl, frame.dctrl]) + frame.mac
                   + bytes([frame.seq_hi, frame.seq_lo]))
         ct = frame.encrypted
-        # Counter advances once per acked uplink. ponytail: nonce carries one
-        # byte; encoding past 255 is unverified (watch for SCAN-FAIL).
-        for c in range(0, 256):
+        # Counter advances once per acked uplink and is not persisted, so a
+        # restarted bridge falls back to a cold scan.
+        # ponytail: cold scan stops at 4096 (~14 days at 300 s); persist the
+        # counter in the device record if a long-lived link outgrows it.
+        last = getattr(self, "_last_data_counter", 0)
+        for c in itertools.chain(range(max(0, last - 8), last + 256), range(4096)):
             nonce = build_nonce(frame.mctrl, frame.dctrl, frame.mac,
                                 frame.seq_hi, frame.seq_lo, c)
             pt = pysodium.crypto_stream_xor(ct, len(ct), nonce, self.session_key)
             if compute_mic(header, pt[4:]) == pt[:4]:
+                self._last_data_counter = c
                 return c
         return None
 

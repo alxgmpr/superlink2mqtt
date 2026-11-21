@@ -21,7 +21,7 @@ def test_detects_nonce_padding_regression(monkeypatch):
     with pytest.raises(AssertionError, match="nonce"):
         check_vector([
             "nonce", "224,84,0,1,2,3,4,5,6,7", "-1",
-            "224,84,0,1,2,3,4,5,6,7,0,0,0,0,0,0,0,0,0,0,0,0,0,255",
+            "224,84,0,1,2,3,4,5,6,7,0,0,0,0,0,0," + ",".join(["255"] * 8),
         ])
 
 

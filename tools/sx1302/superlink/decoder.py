@@ -108,8 +108,8 @@ def build_nonce(mctrl: int, dctrl: int, mac: bytes,
       [2:8]   MAC address
       [8]     SeqHi
       [9]     SeqLo
-      [10:23] Zeros
-      [23]    Counter
+      [10:16] Zeros
+      [16:24] Counter, big-endian (0..255 is byte 23 alone)
     """
     nonce = bytearray(24)
     nonce[0] = mctrl
@@ -117,7 +117,7 @@ def build_nonce(mctrl: int, dctrl: int, mac: bytes,
     nonce[2:8] = mac
     nonce[8] = seq_hi
     nonce[9] = seq_lo
-    nonce[23] = counter & 0xFF
+    nonce[16:24] = (counter % 2**64).to_bytes(8, "big")
     return bytes(nonce)
 
 
