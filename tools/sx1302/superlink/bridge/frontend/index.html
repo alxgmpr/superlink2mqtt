@@ -65,8 +65,12 @@
         </div>
       </section>
 
-      <section id="tab-activity" class="card" hidden>
-        <ul class="list" id="activity"></ul>
+      <section id="tab-activity" class="stack" hidden>
+        <div id="activity" class="stack"></div>
+        <div class="card empty" id="activity-empty" hidden>
+          <h2>No activity yet</h2>
+          <p class="secondary">Connections, pairing and commands appear here. The log starts fresh when the bridge restarts.</p>
+        </div>
       </section>
 
       <section id="tab-gateway" class="stack" hidden>

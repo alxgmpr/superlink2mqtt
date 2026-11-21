@@ -21,7 +21,7 @@ class Management:
         if isinstance(event, DeviceRemoved):
             self.observed.pop(event.mac, None)
             self.activity.appendleft({"time": time.time(), "mac": event.mac.hex(),
-                                      "message": "Device removed"})
+                                      "kind": "removed", "message": "Device removed"})
             return
         if not isinstance(event, (DeviceDiscovered, DeviceStateEvent, DeviceInfoEvent,
                                   PropertyEvent, LinkSignal, CommandStatus)):
@@ -32,6 +32,7 @@ class Management:
         elif isinstance(event, DeviceStateEvent):
             item["state"] = event.state
             self.activity.appendleft({"time": time.time(), "mac": event.mac.hex(),
+                                      "kind": "state", "state": event.state,
                                       "message": f"Device {event.state.replace('_', ' ')}"})
         elif isinstance(event, DeviceInfoEvent):
             item["firmware"] = ".".join(map(str, event.fw_version))
@@ -45,6 +46,7 @@ class Management:
             item["snr"] = event.snr
         elif isinstance(event, CommandStatus):
             self.activity.appendleft({"time": time.time(), "mac": event.mac.hex(),
+                "kind": "status", "status": event.status_code,
                 "message": f"Sensor response: tag {event.message_tag}, status {event.status_code}"})
         if isinstance(event, (PropertyEvent, DeviceInfoEvent, LinkSignal)):
             item["last_seen"] = time.time()
@@ -99,5 +101,6 @@ class Management:
             action = commands[command](mac)
         self.runtime.core.submit(action)
         self.activity.appendleft({"time": time.time(), "mac": mac.hex(),
+                                  "kind": "command", "command": command,
                                   "message": f"{command.replace('_', ' ').capitalize()} queued; waiting for sensor"})
         return {"state": "queued"}

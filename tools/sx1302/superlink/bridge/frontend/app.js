@@ -289,15 +289,62 @@ function renderDevices() {
 }
 $("search").addEventListener("input", () => state && renderDevices());
 
+const COMMANDS = { locate: "Start locate", stop_locate: "Stop locate", refresh: "Refresh info", reboot: "Reboot" };
+const EVENTS = {
+  active: ["Connected", "ok"],
+  adopted: ["Paired", "ok"],
+  adopting: ["Pairing started", "warn"],
+  discovered: ["Found in pairing mode", "warn"],
+  lost: ["Link lost", "error"],
+  beaconing: ["Reconnecting", "warn"],
+  awaiting_reconnect: ["Waiting for reconnect", "warn"],
+};
+// [title, detail, dot] for one entry; unknown kinds fall back to the bridge's message.
+function describe(item) {
+  if (item.kind === "state") {
+    const [title, dot] = EVENTS[item.state] || [item.message, ""];
+    return [title, null, dot];
+  }
+  if (item.kind === "command") return [item.command === "adopt" ? "Pairing requested" : `${COMMANDS[item.command] || item.command} queued`, null, "info"];
+  if (item.kind === "status") return item.status === 0
+    ? ["Sensor confirmed a command", null, "ok"]
+    : ["Sensor rejected a command", `Status ${item.status}`, "error"];
+  if (item.kind === "removed") return ["Removed", null, ""];
+  return [item.message, null, ""];
+}
+function dayLabel(date) {
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(date).setHours(0, 0, 0, 0)) / 86400000);
+  return days === 0 ? "Today" : days === 1 ? "Yesterday" : date.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+}
 function renderActivity() {
-  const rows = state.activity.map((item) => {
+  const names = new Map(state.devices.map((d) => [d.mac, d.name]));
+  const groups = new Map();
+  for (const item of state.activity) {
+    const when = new Date(item.time * 1000);
+    const [title, detail, dot] = describe(item);
     const li = el("li");
-    const text = el("div", item.message, "grow");
-    if (item.mac) text.append(el("div", macLabel(item.mac), "secondary"));
-    li.append(el("time", new Date(item.time * 1000).toLocaleTimeString()), text);
-    return li;
-  });
-  $("activity").replaceChildren(...(rows.length ? rows : [el("li", "No activity since the bridge started.", "empty")]));
+    li.append(el("span", null, `dot ${dot}`));
+    const text = el("span", title, "grow");
+    const who = item.mac ? names.get(item.mac) || macLabel(item.mac) : null;
+    const sub = [who, detail].filter(Boolean).join(" · ");
+    if (sub) text.append(el("small", sub, "secondary"));
+    const time = el("time", when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" }));
+    time.dateTime = when.toISOString();
+    li.append(text, time);
+    const day = dayLabel(when);
+    if (!groups.has(day)) groups.set(day, []);
+    groups.get(day).push(li);
+  }
+  $("activity").replaceChildren(
+    ...[...groups].map(([day, rows]) => {
+      const section = el("div");
+      const list = el("ul", null, "card list activity");
+      list.append(...rows);
+      section.append(el("h2", day, "section-title"), list);
+      return section;
+    }),
+  );
+  $("activity-empty").hidden = state.activity.length > 0;
 }
 
 function renderGateway() {

@@ -542,6 +542,11 @@ dialog .card-actions .danger {
 .setting-body details { border-top: 0; padding-top: 0; }
 .setting-body .settings-actions { justify-content: flex-end; }
 #settings-load-error { margin: 8px 4px; }
+.dot.info { background: var(--primary); }
+#activity { width: 100%; }
+.activity > li { gap: 14px; }
+.activity time { width: auto; text-align: right; font-variant-numeric: tabular-nums; }
+#activity-empty h2 { font-size: 18px; margin-bottom: 4px; }
 #setup-dialog:has(.settings-form) .setup-art { margin-bottom: 16px; padding: 0; }
 #setup-dialog:has(.settings-form) .setup-art svg { max-height: 90px; }
 #setup-dialog:has(.settings-form) #setup-description { margin: 8px 0 14px; }
