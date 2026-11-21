@@ -10,7 +10,7 @@ import queue
 import secrets
 import signal
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .management import Management
 
@@ -31,6 +31,12 @@ class ManagementServer:
         self.config = config
         self.settings = settings
         self.settings_revision = settings.revision() if settings is not None else None
+        # Bumped on every runtime event and UI write, so a browser holding
+        # /api/state?after=<revision> learns of a change without polling.
+        self.revision = 0
+        self.changed = threading.Condition()
+        if hasattr(runtime, "add_event_sink"):
+            runtime.add_event_sink(lambda event: self.touch())
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -112,8 +118,19 @@ class ManagementServer:
                     return
                 if path == "/api/state":
                     if self.authorized():
+                        after = parse_qs(urlsplit(self.path).query).get("after", [""])[0]
+                        if after.isascii() and after.isdigit():
+                            # Under the browser's 10 s abort and the old 3 s poll,
+                            # for changes that fire no event (radio, MQTT state).
+                            with owner.changed:
+                                owner.changed.wait_for(
+                                    lambda: owner.revision != int(after), timeout=3)
+
                         def snapshot():
+                            # Read on the runtime thread: consistent with the data.
+                            revision = owner.revision
                             result = dict(owner.management.snapshot())
+                            result["revision"] = revision
                             if owner.settings is not None:
                                 result.setdefault("settings_revision", owner.settings_revision)
                             return result
@@ -162,10 +179,17 @@ class ManagementServer:
                     self.execute(lambda: owner.management.command(parts[3], body.get("command")))
                 else:
                     self.reply(404, {"error": "Not found"})
+                    return
+                owner.touch()  # commands and settings change the snapshot too
 
         self.server = ThreadingHTTPServer((config.host, config.port), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True,
                                        name="superlink-web")
+
+    def touch(self):
+        with self.changed:
+            self.revision += 1
+            self.changed.notify_all()
 
     @property
     def address(self):

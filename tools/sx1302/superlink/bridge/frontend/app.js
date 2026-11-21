@@ -169,7 +169,7 @@ async function unlock(ingress = false) {
     tab("devices");
     render();
     clearTimeout(timer);
-    timer = setTimeout(refresh, 3000);
+    timer = setTimeout(refresh);
   } catch (error) {
     if (ingress) {
       $("session-status").hidden = false;
@@ -210,10 +210,14 @@ async function refresh() {
   const requestToken = token;
   const version = sessionVersion;
   clearTimeout(timer);
+  let pushed = false;
   try {
-    const snapshot = await api("state");
+    // The bridge holds this request until something changes (3 s at most).
+    const after = Number.isInteger(state?.revision) ? `?after=${state.revision}` : "";
+    const snapshot = await api(`state${after}`);
     if (token !== requestToken || version !== sessionVersion) return;
     state = snapshot;
+    pushed = Number.isInteger(state.revision);
     if (settingsApplyingRevision === state.settings_revision) settingsApplyingRevision = null;
     if ($("setup-error").textContent.startsWith("Connection interrupted.")) $("setup-error").hidden = true;
     render();
@@ -233,7 +237,8 @@ async function refresh() {
   } finally {
     refreshing = false;
     clearTimeout(timer);
-    if (token) timer = setTimeout(refresh, 3000);
+    // Errors and bridges without push fall back to the 3 s poll.
+    if (token) timer = setTimeout(refresh, pushed ? 0 : 3000);
   }
 }
 

@@ -272,6 +272,26 @@ def test_http_pair_command_and_state(monkeypatch, ingress):
         assert b"Sensor response" not in snapshot
 
 
+def test_state_request_is_held_until_a_device_event():
+    from superlink.bridge.events import DeviceStateEvent
+    with running_web() as (rt, web):
+        revision = json.loads(request(web, "GET", "/api/state")[1])["revision"]
+        threading.Timer(0.2, lambda: rt.submit_management(
+            lambda: rt._on_event(DeviceStateEvent(SENSOR_MAC, "active")))).start()
+        started = time.monotonic()
+        code, body, _ = request(web, "GET", f"/api/state?after={revision}")
+        elapsed = time.monotonic() - started
+        assert code == 200 and 0.15 < elapsed < 2  # held, then released by the event
+        snapshot = json.loads(body)
+        assert snapshot["revision"] > revision
+        assert snapshot["devices"][0]["state"] == "active"
+        # A stale or malformed revision never blocks.
+        started = time.monotonic()
+        assert request(web, "GET", "/api/state?after=x")[0] == 200
+        assert request(web, "GET", f"/api/state?after={revision}")[0] == 200
+        assert time.monotonic() - started < 1
+
+
 def test_web_config_requires_private_token_and_valid_port(tmp_path, monkeypatch):
     config = tmp_path / "config.yaml"
     config.write_text('gw_mac: "aabbccddeeff"\nweb: {}\n')
