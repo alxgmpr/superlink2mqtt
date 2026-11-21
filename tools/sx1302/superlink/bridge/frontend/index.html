@@ -51,12 +51,19 @@
         </form>
       </section>
 
-      <section id="tab-devices" hidden>
-        <div class="toolbar">
+      <section id="tab-devices" class="stack" hidden>
+        <div class="toolbar" id="device-toolbar" hidden>
           <input id="search" type="search" placeholder="Search devices" aria-label="Search devices" />
           <span class="secondary" id="device-count"></span>
         </div>
-        <div class="grid" id="devices"></div>
+        <div id="pairing-group" hidden>
+          <h2 class="section-title">Ready to pair</h2>
+          <div class="grid" id="pairing"></div>
+        </div>
+        <div id="sensor-group" hidden>
+          <h2 class="section-title" id="sensor-title">Sensors</h2>
+          <div class="grid" id="devices"></div>
+        </div>
         <p id="search-empty" class="empty" hidden>No matching devices. Clear or change your search.</p>
         <div class="card empty" id="devices-empty" hidden>
           <h2>Add your first sensor</h2>

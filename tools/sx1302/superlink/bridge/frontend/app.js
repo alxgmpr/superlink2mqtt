@@ -46,12 +46,6 @@ function icon(name, off) {
   wrap.append(svg);
   return wrap;
 }
-function chip(text, dot) {
-  const node = el("span", null, "chip");
-  if (dot) node.append(el("span", null, `dot ${dot}`));
-  node.append(el("span", text));
-  return node;
-}
 let toastTimer = null;
 function toast(message) {
   clearTimeout(toastTimer);
@@ -136,6 +130,7 @@ function lock() {
   $("health").hidden = true;
   cardNodes.clear();
   $("devices").replaceChildren();
+  $("pairing").replaceChildren();
   $("activity").replaceChildren();
   $("gateway").replaceChildren();
   $("tabs").hidden = $("lock").hidden = $("mqtt-chip").hidden = $("demo-chip").hidden = true;
@@ -258,39 +253,72 @@ function render() {
   if (selectedMac && $("dialog").open) fillDialog();
 }
 
-function renderDevices() {
-  const query = $("search").value.trim().toLowerCase();
-  const devices = state.devices.filter((d) => `${d.name} ${d.mac} ${macLabel(d.mac)}`.toLowerCase().includes(query));
-  const cards = devices.map((d) => {
-    // Reuse card nodes across polls so a click spanning a refresh still lands.
-    let card = cardNodes.get(d.mac);
-    if (!card) {
-      card = el("button", null, "card device");
-      card.addEventListener("click", () => openDialog(d.mac));
-      cardNodes.set(d.mac, card);
-    }
-    const head = el("div", null, "device-head");
-    const title = el("div");
-    title.append(el("div", d.name, "device-name"), el("div", STATES[d.state] || d.state, "secondary"));
-    head.append(deviceIcon(d), title);
-    // Headline: a state (door/motion/leak) beats a measurement.
-    const shown = d.properties.filter((p) => !HIDDEN.has(p.name) && !isBattery(p) && p.name !== "BATTERY_VOLTAGE");
-    const reading = shown.find((p) => typeof p.value === "boolean") || shown[0];
-    const battery = d.properties.find(isBattery);
-    const meta = el("div", null, "meta");
-    if (battery) meta.append(chip(`Battery ${format(battery)}`));
-    if (d.rssi != null) meta.append(chip(dbm(d)));
-    meta.append(chip(age(d.last_seen), online(d) ? "ok" : d.state === "lost" ? "error" : "warn"));
-    card.replaceChildren(head, el("div", reading ? format(reading) : "—", "primary-reading"), meta);
+const SEARCH_FROM = 7; // search earns its space only once the grid scrolls
+const pairable = (d) => !d.adopted && ["discovered", "adopting"].includes(d.state);
+const dotFor = (d) => online(d) ? "ok" : d.state === "lost" ? "error" : "warn";
+// 1–4 bars from gateway RSSI; SF5 links fall apart below roughly -110 dBm.
+const bars = (rssi) => rssi >= -80 ? 4 : rssi >= -95 ? 3 : rssi >= -105 ? 2 : 1;
+function signal(d) {
+  const node = el("span", null, "signal");
+  node.title = `${dbm(d)}${d.snr == null ? "" : ` · SNR ${num(d.snr)} dB`}`;
+  const meter = el("span", null, `bars b${bars(d.rssi)}`);
+  meter.append(...[1, 2, 3, 4].map(() => el("i")));
+  node.append(meter, el("span", dbm(d)));
+  return node;
+}
+function deviceCard(d) {
+  // Reuse card nodes across polls so a click spanning a refresh still lands.
+  let card = cardNodes.get(d.mac);
+  if (!card) {
+    card = el("button", null, "card device");
+    card.addEventListener("click", () => openDialog(d.mac));
+    cardNodes.set(d.mac, card);
+  }
+  card.classList.toggle("offline", !online(d) && !pairable(d));
+  card.classList.toggle("pairing", pairable(d));
+  const head = el("div", null, "device-head");
+  const title = el("div", null, "grow");
+  title.append(el("div", d.name, "device-name"), el("div", pairable(d) ? macLabel(d.mac) : STATES[d.state] || d.state, "secondary"));
+  head.append(deviceIcon(d), title, el("span", null, `dot ${pairable(d) ? "info" : dotFor(d)}`));
+  card.replaceChildren(head);
+  if (pairable(d)) {
+    card.append(el("div", d.state === "adopting" ? "Pairing…" : "Pair this sensor →", "pair-cta"));
     return card;
-  });
-  const current = [...$("devices").children];
-  if (current.length !== cards.length || cards.some((c, i) => c !== current[i])) $("devices").replaceChildren(...cards);
+  }
+  // Headline: a state (door/motion/leak) beats a measurement.
+  const shown = d.properties.filter((p) => !HIDDEN.has(p.name) && !isBattery(p) && p.name !== "BATTERY_VOLTAGE");
+  const reading = shown.find((p) => typeof p.value === "boolean") || shown[0];
+  const big = el("div", null, "reading");
+  big.append(el("span", reading ? label(reading.name) : "Reading", "secondary"));
+  big.append(el("span", reading ? format(reading) : "—", `value${reading?.value === true ? " hot" : ""}`));
+  const battery = d.properties.find(isBattery);
+  const meta = el("div", null, "meta");
+  if (battery) meta.append(el("span", `${format(battery)} battery`, battery.value < 20 ? "low" : ""));
+  if (d.rssi != null) meta.append(signal(d));
+  meta.append(el("span", age(d.last_seen), "seen"));
+  card.append(big, meta);
+  return card;
+}
+function fill(container, cards) {
+  const current = [...container.children];
+  if (current.length !== cards.length || cards.some((c, i) => c !== current[i])) container.replaceChildren(...cards);
+}
+function renderDevices() {
+  const searching = state.devices.length >= SEARCH_FROM;
+  $("device-toolbar").hidden = !searching;
+  const query = searching ? $("search").value.trim().toLowerCase() : "";
+  const devices = state.devices.filter((d) => `${d.name} ${d.mac} ${macLabel(d.mac)}`.toLowerCase().includes(query));
+  const waiting = devices.filter(pairable), paired = devices.filter((d) => !pairable(d));
+  fill($("pairing"), waiting.map(deviceCard));
+  fill($("devices"), paired.map(deviceCard));
+  $("pairing-group").hidden = !waiting.length;
+  $("sensor-group").hidden = !paired.length;
+  const live = paired.filter(online).length;
+  $("sensor-title").textContent = paired.length ? `Sensors · ${live} of ${paired.length} online` : "Sensors";
   $("devices-empty").hidden = state.devices.some((d) => d.adopted) || !!state.setup?.blocked;
   $("search-empty").hidden = !state.devices.length || devices.length !== 0;
   for (const mac of cardNodes.keys()) if (!state.devices.some((d) => d.mac === mac)) cardNodes.delete(mac);
-  const recent = state.devices.filter((d) => d.last_seen && Date.now() / 1000 - d.last_seen < 60).length;
-  $("device-count").textContent = state.devices.length ? `${state.devices.length} ${state.devices.length === 1 ? "device" : "devices"} · ${recent} seen in last minute` : "";
+  $("device-count").textContent = `${state.devices.length} devices`;
 }
 $("search").addEventListener("input", () => state && renderDevices());
 
