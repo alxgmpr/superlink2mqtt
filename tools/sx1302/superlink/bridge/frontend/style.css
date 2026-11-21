@@ -178,7 +178,8 @@ button.filled:disabled {
   font-size: 12px;
   margin-bottom: 4px;
 }
-input {
+input,
+select {
   width: 100%;
   font: inherit;
   color: var(--text);
@@ -188,7 +189,8 @@ input {
   border-radius: 4px 4px 0 0;
   padding: 10px 12px;
 }
-input:focus {
+input:focus,
+select:focus {
   outline: none;
   border-bottom: 2px solid var(--primary);
 }
@@ -510,7 +512,7 @@ dialog .card-actions .danger {
 .settings-field { margin: 0; min-width: 0; }
 .settings-field:not(.field-username):not(.field-port) { grid-column: 1 / -1; }
 .settings-field small { font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
-.settings-field select, .settings-key textarea { width: 100%; box-sizing: border-box; color: var(--text); background: var(--card); border: 1px solid var(--divider); border-radius: 8px; padding: 12px; font: inherit; }
+.settings-key textarea { width: 100%; box-sizing: border-box; color: var(--text); background: var(--card); border: 1px solid var(--divider); border-radius: 8px; padding: 12px; font: inherit; }
 .settings-field input { width: 100%; box-sizing: border-box; }
 .settings-field.settings-toggle { display: flex; flex-direction: row-reverse; justify-content: flex-end; align-items: center; gap: 10px; }
 .settings-field input[type="checkbox"] { width: 20px; height: 20px; }
@@ -521,8 +523,25 @@ dialog .card-actions .danger {
 .settings-key p { color: var(--muted); font-size: 13px; line-height: 1.5; }
 .settings-key textarea { font-family: monospace; font-size: 12px; resize: vertical; }
 .settings-key a { display: inline-block; color: var(--primary-text); font-size: 13px; margin: 8px; }
-#gateway-settings { max-width: 650px; }
-#gateway-settings > details { margin: 12px 0; }
+/* Gateway tab: titled sections of cards, after HA settings pages. */
+.stack { display: flex; flex-direction: column; gap: 24px; max-width: 760px; margin: 0 auto; }
+.section-title { font-size: 13px; font-weight: 500; color: var(--muted); margin: 0 4px 8px; }
+.list .grow small, .setting .grow small { display: block; margin-top: 2px; font-size: 12px; overflow-wrap: anywhere; }
+.status { display: inline-flex; align-items: center; gap: 8px; }
+.list code.value { font-size: 13px; }
+.setting { margin: 0; padding: 0; border-top: 1px solid var(--divider); }
+.setting:first-child { border-top: 0; }
+.setting > summary { display: flex; align-items: center; gap: 16px; min-height: 64px; padding: 8px 16px; color: var(--text); font-weight: 400; list-style: none; }
+.setting > summary::-webkit-details-marker { display: none; }
+.setting > summary::after { content: ""; flex: none; width: 8px; height: 8px; margin-right: 4px; border: solid var(--muted); border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform .15s; }
+.setting[open] > summary::after { transform: rotate(-135deg); }
+.setting > summary:hover { background: var(--hover); }
+.setting .grow { flex: 1; min-width: 0; }
+.setting-body { padding: 0 16px 16px; }
+.setting-body .settings-form { margin-top: 4px; }
+.setting-body details { border-top: 0; padding-top: 0; }
+.setting-body .settings-actions { justify-content: flex-end; }
+#settings-load-error { margin: 8px 4px; }
 #setup-dialog:has(.settings-form) .setup-art { margin-bottom: 16px; padding: 0; }
 #setup-dialog:has(.settings-form) .setup-art svg { max-height: 90px; }
 #setup-dialog:has(.settings-form) #setup-description { margin: 8px 0 14px; }

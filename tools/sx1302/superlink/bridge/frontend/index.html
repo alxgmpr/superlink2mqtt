@@ -69,17 +69,35 @@
         <ul class="list" id="activity"></ul>
       </section>
 
-      <section id="tab-gateway" class="card" hidden>
-        <ul class="list" id="gateway"></ul>
-        <div id="gateway-settings" class="card-content" hidden>
-          <details><summary>Radio settings</summary><div id="radio-settings"></div></details>
-          <details><summary>MQTT settings</summary><div id="mqtt-settings"></div></details>
+      <section id="tab-gateway" class="stack" hidden>
+        <div>
+          <h2 class="section-title">Status</h2>
+          <ul class="card list" id="gateway"></ul>
         </div>
-        <p id="settings-load-error" class="card-content setup-error" hidden></p>
-        <button id="settings-retry" hidden>Reload settings</button>
-        <div class="card-actions">
-          <span class="secondary grow" id="settings-fallback">Edit the YAML and restart to change settings.</span>
-          <button id="diagnostics">Download diagnostics</button>
+        <div id="gateway-settings" hidden>
+          <h2 class="section-title">Settings</h2>
+          <div class="card">
+            <details class="setting">
+              <summary><span class="grow">Radio<small class="secondary">Pi address, account and host key</small></span></summary>
+              <div class="setting-body" id="radio-settings"></div>
+            </details>
+            <details class="setting">
+              <summary><span class="grow">MQTT<small class="secondary">Broker, credentials and topics</small></span></summary>
+              <div class="setting-body" id="mqtt-settings"></div>
+            </details>
+          </div>
+          <p id="settings-load-error" class="setup-error" hidden></p>
+          <button id="settings-retry" hidden>Reload settings</button>
+        </div>
+        <div>
+          <h2 class="section-title">Troubleshooting</h2>
+          <ul class="card list">
+            <li>
+              <span class="grow">Diagnostics<small class="secondary">Bridge state as JSON, for bug reports.</small></span>
+              <button id="diagnostics">Download</button>
+            </li>
+            <li id="settings-fallback"><span class="grow">Settings<small class="secondary">Edit the bridge YAML and restart to change them.</small></span></li>
+          </ul>
         </div>
       </section>
 

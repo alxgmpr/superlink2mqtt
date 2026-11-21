@@ -302,19 +302,38 @@ function renderActivity() {
 
 function renderGateway() {
   const backend = state.demo ? "SX1302 (demo)" : state.backend === "sx1302-ssh" ? "SX1302 over SSH" : state.backend === "sx1302-gwmp" ? "SX1302 via UDP packet forwarder" : "SX1302";
+  const radio = state.radio?.state || "unknown";
+  const paired = state.devices.filter((d) => d.adopted).length;
+  const live = state.devices.filter(online).length;
+  const where = settingsSummary();
+  const rows = [
+    ["Radio", [backend, where.radio].filter(Boolean).join(" · "), status(radio, { connected: "ok", connecting: "warn", starting: "warn" })],
+    ["MQTT", where.mqtt || "Publishes readings to Home Assistant", status(state.mqtt, { connected: "ok", disabled: "" })],
+    ["Sensors", "Paired with this gateway", paired ? status(`${live} of ${paired} online`, { [`${paired} of ${paired} online`]: "ok" }, "warn") : el("span", "None paired", "value secondary")],
+    ["Gateway MAC", "Identity sensors pair with", el("code", macLabel(state.gateway_mac), "value")],
+  ];
   $("gateway").replaceChildren(
-    ...[
-      ["Radio backend", backend],
-      ["Radio connection", state.radio?.state || "unknown"],
-      ["Gateway MAC", macLabel(state.gateway_mac)],
-      ["MQTT", state.mqtt],
-      ["Devices", String(state.devices.length)],
-    ].map(([k, v]) => {
+    ...rows.map(([k, sub, value]) => {
       const li = el("li");
-      li.append(el("span", k, "grow"), el("span", v, "value"));
+      const text = el("span", k, "grow");
+      text.append(el("small", sub, "secondary"));
+      li.append(text, value);
       return li;
     }),
   );
+}
+// A coloured dot + capitalized state; states missing from `dots` get `fallback`.
+function status(value, dots, fallback = "error") {
+  const node = el("span", null, "status value");
+  node.append(el("span", null, `dot ${dots[value] ?? fallback}`), el("span", value.charAt(0).toUpperCase() + value.slice(1)));
+  return node;
+}
+function settingsSummary() {
+  const r = settingsForms.radio?.values(), m = settingsForms.mqtt?.values();
+  return {
+    radio: r ? `${r.username}@${r.host}${r.port === 22 ? "" : `:${r.port}`}` : "",
+    mqtt: !m ? "" : m.mode === "automatic" ? "Home Assistant broker" : `${m.host}:${m.port}${m.tls ? " · TLS" : ""}`,
+  };
 }
 
 // ---- device dialog -------------------------------------------------------------
