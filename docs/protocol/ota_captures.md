@@ -191,7 +191,7 @@ Key:   3bfc41760a9eb10c01989bfdbfc384f770617d7a5bfa56acc72d90edeefb8c06
 Nonce: E0 54 9041B22E9A53 0D 2D 00...00 08  (counter = 0x0D - 5 = 8)
 
 Decrypted: [MIC 4B] 0C 00 01 00 00 08 6E 04 02 00 64 E0 07 03 00 60 0C 16 00 0F 00 00
-                     ^type  ^sub     ^uptime? ^?  ^bat ^temp ^?  ^?     ^?  ^door=OPEN
+                     ^type  ^sub     ^uptime? ^?  ^bat ^temp ^?  ^?     ^?  ^door=CLOSED
 ```
 
 Payload matches the extended report format from the first session exactly.

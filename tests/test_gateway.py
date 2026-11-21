@@ -82,7 +82,7 @@ def test_handle_ul_data_in_active_state():
     assert result is not None
     assert result.payload == payload
     assert result.mic == mic
-    assert result.interpretation == "DOOR CLOSED"
+    assert result.interpretation == "DOOR OPEN"
 
 
 def test_handle_rx_ignores_wrong_mac():

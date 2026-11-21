@@ -36,12 +36,12 @@ def test_parse_frame_unknown_dctrl():
     assert frame.frame_type == "unknown"
 
 
-def test_interpret_payload_door_open():
-    assert interpret_payload(0x54, bytes([0x0C, 0x00, 0x0F, 0x00, 0x00])) == "DOOR OPEN"
-
-
 def test_interpret_payload_door_closed():
-    assert interpret_payload(0x54, bytes([0x0C, 0x00, 0x0F, 0x00, 0x01])) == "DOOR CLOSED"
+    assert interpret_payload(0x54, bytes([0x0C, 0x00, 0x0F, 0x00, 0x00])) == "DOOR CLOSED"
+
+
+def test_interpret_payload_door_open():
+    assert interpret_payload(0x54, bytes([0x0C, 0x00, 0x0F, 0x00, 0x01])) == "DOOR OPEN"
 
 
 def test_interpret_payload_too_short():

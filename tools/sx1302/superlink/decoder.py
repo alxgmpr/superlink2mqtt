@@ -246,10 +246,11 @@ def _interpret_sensor_payload(payload: bytes) -> str | None:
     # Standard door state (5B payload)
     if subtype == CMD_DOOR_STATE and len(payload) >= 5:
         state = payload[4]
+        # Same byte as ENTRY_DETECTED (id15): 1 = open. HW-verified 2026-11-21.
         if state == 0x00:
-            return "DOOR OPEN"
-        elif state == 0x01:
             return "DOOR CLOSED"
+        elif state == 0x01:
+            return "DOOR OPEN"
         return f"DOOR state=0x{state:02X}"
 
     # Extended report (22B payload)
@@ -258,7 +259,7 @@ def _interpret_sensor_payload(payload: bytes) -> str | None:
         temp_raw = int.from_bytes(payload[11:13], 'little')
         door_cmd = payload[19]
         door_state = payload[20]
-        door_str = "OPEN" if door_state == 0 else "CLOSED" if door_state == 1 else f"0x{door_state:02X}"
+        door_str = "CLOSED" if door_state == 0 else "OPEN" if door_state == 1 else f"0x{door_state:02X}"
 
         parts = [f"ext_report bat={battery}%"]
         if temp_raw > 0:

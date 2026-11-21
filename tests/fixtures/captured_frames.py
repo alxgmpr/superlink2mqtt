@@ -20,7 +20,7 @@ DEFAULT_PAIRING_KEY = bytes.fromhex(
 FRAME_19B_RAW = bytes.fromhex("E054 9041B22E9A53 5B11 9CFFC24C 8A41BC35D6".replace(" ", ""))
 # After decryption with session key, counter = 0x5B - 5 = 0x56 = 86:
 # MIC = first 4 bytes of decrypted, payload = remaining 5 bytes
-# Decrypted payload: 0C 00 0F 00 01 (DOOR CLOSED)
+# Decrypted payload: 0C 00 0F 00 01 (DOOR OPEN)
 
 # --- Captured OTA frame: 36B extended UL data ---
 # From ota_captures.md second capture session (confirmed decrypted)
