@@ -98,6 +98,16 @@ first radio save. Existing gateway identities, sensor stores, SSH private keys
 and operator-provided files are preserved. The app still requires installation
 of the radio service and authorization of its public key on the Pi.
 
+**Gateway → Network** is optional; a new network needs none of it. It holds the
+gateway MAC, the pairing key (factory default unless you enter 64 hex digits;
+never shown after saving), automatic pairing (off, any sensor, or a MAC list),
+and under Advanced: log level, downlink IQ inversion and timing, and the
+link-lost and watchdog timeouts. Until you save this section the bridge uses
+`bridge.yaml` and built-in defaults; once saved, these values override the same
+keys in `bridge.yaml`. Changing the gateway MAC or pairing key while sensors are
+paired requires **Allow changes that need sensors to be paired again**, because
+those sensors stop connecting until they are paired again.
+
 ## Existing installations and manual provisioning
 
 Place these files in `/addon_configs/local_superlink2mqtt/` on Home Assistant

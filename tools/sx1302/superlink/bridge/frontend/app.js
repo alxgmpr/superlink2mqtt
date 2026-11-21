@@ -143,6 +143,7 @@ function lock() {
   $("setup-settings").replaceChildren();
   $("radio-settings").replaceChildren();
   $("mqtt-settings").replaceChildren();
+  $("network-settings").replaceChildren();
 }
 $("lock").addEventListener("click", lock);
 
@@ -698,7 +699,7 @@ async function loadSettings() {
   try {
     const data = await api("settings");
     if (version !== sessionVersion) return;
-    for (const section of ["radio", "mqtt"]) {
+    for (const section of ["radio", "mqtt", "network"]) {
       if (settingsForms[section]) settingsForms[section].hydrate(data);
       else settingsForms[section] = new SettingsForm(section, data, async (body) => {
         const result = await api("settings", body);

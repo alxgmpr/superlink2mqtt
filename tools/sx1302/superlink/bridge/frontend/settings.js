@@ -8,6 +8,7 @@ function settingsValues(fields, inputs) {
   return Object.fromEntries(fields.map((field) => [field.name, field.type === "checkbox" ? inputs[field.name].checked :
     field.type === "number" ? Number(inputs[field.name].value) : inputs[field.name].value]));
 }
+const SECTION_NAMES = { radio: "radio", mqtt: "MQTT", network: "network" };
 class SettingsForm {
   constructor(section, snapshot, save, reload, onChange) {
     this.section = section;
@@ -27,7 +28,8 @@ class SettingsForm {
     };
     this.element = make("form", "", "settings-form");
     this.element.noValidate = true;
-    this.element.setAttribute("aria-label", section === "radio" ? "Radio settings" : "MQTT settings");
+    const name = SECTION_NAMES[section];
+    this.element.setAttribute("aria-label", `${name[0].toUpperCase()}${name.slice(1)} settings`);
     this.grid = make("div", "", "settings-fields");
     this.element.append(this.grid);
     const advanced = make("details", "", "settings-advanced");
@@ -52,7 +54,7 @@ class SettingsForm {
         if (field.min != null) input.min = field.min;
         if (field.max != null) input.max = field.max;
         if (field.type === "number") input.step = "1";
-        input.maxLength = ["host_key", "password"].includes(field.name) ? 4096 : 255;
+        input.maxLength = ["host_key", "password", "auto_pair_macs"].includes(field.name) ? 4096 : 255;
         input.placeholder = field.placeholder || "";
       }
       row.append(make("span", field.label), input);
@@ -90,7 +92,7 @@ class SettingsForm {
     this.keyDetails.append(keyLabel, copy, guide);
     if (section === "radio") this.element.append(this.keyDetails);
     this.status = make("p", "", "settings-message"); this.status.setAttribute("role", "status");
-    this.submit = make("button", section === "radio" ? "Save radio settings" : "Save MQTT settings", "filled");
+    this.submit = make("button", `Save ${name} settings`, "filled");
     this.submit.type = "submit";
     this.reloadButton = make("button", "Reload saved settings"); this.reloadButton.type = "button";
     this.reloadButton.hidden = true;
@@ -137,7 +139,7 @@ class SettingsForm {
       const value = snapshot.values[this.section][field.name];
       if (field.type === "checkbox") this.inputs[field.name].checked = !!value;
       else this.inputs[field.name].value = value ?? "";
-      if (field.type === "password") this.inputs[field.name].placeholder = (field.name === "token" ? snapshot.token_set : snapshot.password_set) ? "Saved · leave blank to keep" : field.name === "token" ? "" : "Optional";
+      if (field.type === "password") this.inputs[field.name].placeholder = snapshot[`${field.name}_set`] ? "Saved · leave blank to keep" : field.placeholder || (field.name === "token" ? "" : "Optional");
     }
     this.key.value = snapshot.public_key || "";
     this.keyDetails.hidden = !snapshot.public_key;
