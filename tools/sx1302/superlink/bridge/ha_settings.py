@@ -1,6 +1,7 @@
 """Persistent HA connection settings shared by bootstrap and the running bridge."""
 import base64
 import copy
+import dataclasses
 import hashlib
 import json
 import os
@@ -16,7 +17,11 @@ import yaml
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from .config import DEFAULT_PAIRING_KEY, RuntimeConfig
 from .store import JsonDeviceStore
+
+DEFAULTS = {f.name: f.default for f in dataclasses.fields(RuntimeConfig)}
+DEFAULT_KEY_HEX = DEFAULT_PAIRING_KEY.hex()
 
 # One field definition drives both embedded forms and server-side validation.
 FIELDS = {
@@ -41,6 +46,33 @@ FIELDS = {
         {"name": "tls", "label": "Use TLS", "type": "checkbox", "when": {"mode": "custom"}},
         {"name": "base_topic", "label": "Sensor topic", "required": True, "advanced": True},
         {"name": "discovery_prefix", "label": "Discovery prefix", "required": True, "advanced": True},
+    ],
+    # Network-level knobs. Defaults reproduce the bridge's built-in behaviour.
+    "network": [
+        {"name": "gateway_mac", "label": "Gateway MAC", "placeholder": "Created when you first save radio settings",
+         "help": "The identity sensors pair with. Changing it disconnects paired sensors until you pair them again."},
+        {"name": "pairing_key", "label": "Pairing key", "type": "password", "placeholder": "Factory default",
+         "help": "32 bytes as 64 hex digits. Factory-reset sensors only pair with the factory default. Leave blank to keep the current key."},
+        {"name": "use_default_key", "label": "Use the factory default pairing key", "type": "checkbox"},
+        {"name": "allow_repair", "label": "Allow changes that need sensors to be paired again", "type": "checkbox"},
+        {"name": "auto_pair", "label": "Pair new sensors", "type": "select",
+         "choices": [["manual", "When I choose Pair"], ["all", "Automatically, any sensor in pairing mode"],
+                     ["list", "Automatically, only the sensors listed"]]},
+        {"name": "auto_pair_macs", "label": "Sensor MACs to pair automatically", "required": True, "when": {"auto_pair": "list"},
+         "placeholder": "aa:bb:cc:dd:ee:ff, …", "help": "Separate MACs with commas or spaces."},
+        {"name": "log_level", "label": "Log level", "type": "select", "advanced": True,
+         "choices": [["DEBUG", "Debug"], ["INFO", "Info"], ["WARNING", "Warning"], ["ERROR", "Error"]]},
+        {"name": "invert_iq", "label": "Invert downlink IQ", "type": "checkbox", "advanced": True},
+        {"name": "downlink_delay_us", "label": "Downlink delay (µs)", "type": "number", "min": 0, "max": 10_000_000,
+         "required": True, "advanced": True, "help": f'Time from an uplink to the reply. Default {DEFAULTS["downlink_delay_us"]}.'},
+        {"name": "burst_spacing_us", "label": "Burst spacing (µs)", "type": "number", "min": 0, "max": 5_000_000,
+         "required": True, "advanced": True, "help": f'Gap between frames in one reply. Default {DEFAULTS["burst_spacing_us"]}.'},
+        {"name": "link_lost_timeout", "label": "Link-lost timeout (s)", "type": "number", "min": 60, "max": 86400,
+         "required": True, "advanced": True, "help": f'Silence before a sensor shows as disconnected. Default {DEFAULTS["link_lost_timeout"]:g}.'},
+        {"name": "watchdog_timeout", "label": "Watchdog timeout (s)", "type": "number", "min": 0, "max": 86400,
+         "required": True, "advanced": True, "help": f'Silence before the bridge forces a reconnect. 0 turns it off. Default {DEFAULTS["watchdog_timeout"]:g}.'},
+        {"name": "watchdog_short_challenge_k", "label": "Watchdog rejected-reconnect limit", "type": "number", "min": 0, "max": 100,
+         "required": True, "advanced": True, "help": f'Rejected reconnects before the watchdog acts. 0 turns it off. Default {DEFAULTS["watchdog_short_challenge_k"]}.'},
     ],
 }
 
@@ -71,6 +103,12 @@ def atomic_write(path, content):
             os.unlink(temporary)
 
 
+def mac_hex(value):
+    """Accept aa:bb:cc:dd:ee:ff / aa-bb-… / aabbccddeeff; return bare lowercase hex or None."""
+    value = value.replace(":", "").replace("-", "").lower()
+    return value if re.fullmatch(r"[0-9a-f]{12}", value) else None
+
+
 def host_key(value):
     parts = value.split()
     if len(parts) < 2:
@@ -94,7 +132,7 @@ class HASettings:
     def read(self):
         try:
             doc = json.loads(self.path.read_text()) if self.path.exists() else {}
-            if not isinstance(doc, dict) or any(not isinstance(doc.get(k, {}), dict) for k in ("radio", "mqtt")):
+            if not isinstance(doc, dict) or any(not isinstance(doc.get(k, {}), dict) for k in FIELDS):
                 raise ValueError()
             return doc
         except (ValueError, OSError):
@@ -134,7 +172,20 @@ class HASettings:
             if key in (base.get("mqtt") or {}):
                 mqtt[key] = base["mqtt"][key]
         mqtt.update(doc.get("mqtt", {}))
-        return {"radio": radio, "mqtt": mqtt}
+        adopt = base.get("adopt") or []
+        auto_all = isinstance(adopt, str) and adopt.lower() == "all"
+        network = {"gateway_mac": "", "pairing_key": str(base.get("pairing_key") or DEFAULT_KEY_HEX).lower(),
+                   "use_default_key": False, "allow_repair": False,
+                   "auto_pair": "all" if auto_all else "list" if adopt else "manual",
+                   "auto_pair_macs": "" if auto_all else ", ".join(adopt),
+                   "log_level": (base.get("log") or {}).get("level", DEFAULTS["log_level"]),
+                   "invert_iq": bool(base.get("invert_iq", DEFAULTS["invert_iq"]))}
+        for name in ("downlink_delay_us", "burst_spacing_us", "link_lost_timeout", "watchdog_timeout", "watchdog_short_challenge_k"):
+            network[name] = int(base.get(name, DEFAULTS[name]))
+        network.update(doc.get("network", {}))
+        # A saved override wins; otherwise the identity bridge.yaml or the radio save created.
+        network["gateway_mac"] = network["gateway_mac"] or base.get("gw_mac") or doc.get("gateway_mac", "")
+        return {"radio": radio, "mqtt": mqtt, "network": network}
 
     def revision(self):
         digest = hashlib.sha256()
@@ -148,6 +199,7 @@ class HASettings:
             values = self.values()
             password_set = bool(values["mqtt"].pop("password", ""))
             token_set = bool(values["radio"].pop("token", ""))
+            pairing_key_set = values["network"].pop("pairing_key") != DEFAULT_KEY_HEX
             public_key = ""
             key_path = self.root / "radio_ed25519"
             if key_path.is_file() and values["radio"]["transport"] == "ssh":
@@ -157,11 +209,12 @@ class HASettings:
                 except (OSError, ValueError, paramiko.SSHException):
                     pass
             return {"fields": FIELDS, "values": values, "revision": self.revision(),
-                    "public_key": public_key, "password_set": password_set, "token_set": token_set}
+                    "public_key": public_key, "password_set": password_set, "token_set": token_set,
+                    "pairing_key_set": pairing_key_set}
 
     def validate(self, section, values):
         if not isinstance(section, str) or section not in FIELDS or not isinstance(values, dict):
-            raise ValueError("Choose radio or MQTT settings.")
+            raise ValueError("Choose a settings section.")
         allowed = {f["name"] for f in FIELDS[section]}
         if set(values) - allowed:
             raise ValueError("Unknown settings field.")
@@ -177,7 +230,7 @@ class HASettings:
             elif kind == "number":
                 valid = type(value) is int and field["min"] <= value <= field["max"]
             else:
-                valid = isinstance(value, str) and len(value) <= (4096 if name in ("password", "host_key") else 255) and not any(ord(c) < 32 for c in value)
+                valid = isinstance(value, str) and len(value) <= (4096 if name in ("password", "host_key", "auto_pair_macs") else 255) and not any(ord(c) < 32 for c in value)
                 if valid and kind != "password":
                     value = value.strip()
                 if valid and kind == "select":
@@ -190,13 +243,15 @@ class HASettings:
             active = all(result.get(k) == v for k, v in field.get("when", {}).items())
             if active and field.get("required") and result.get(field["name"]) in (None, ""):
                 raise ValueError(f'{field["label"]} is required.')
-        if section == "radio" or result["mode"] == "custom":
+        if section == "radio" or result.get("mode") == "custom":
             if not re.fullmatch(r"[A-Za-z0-9_.:%-]+", result["host"]):
                 raise ValueError("Enter a hostname or IP address without a scheme or path.")
         if section == "radio" and result["transport"] == "tcp":
             result["token"] = result["token"].strip()  # pasted from `cat`
             if len(result["token"]) < 32 or len(result["token"]) > 255:
                 raise ValueError("Enter the radio access token from your Pi (32 to 255 characters).")
+        elif section == "network":
+            self.validate_network(result, previous, values)
         elif section == "radio":
             if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.-]*[$]?", result["username"]):
                 raise ValueError("Enter a valid Pi account name.")
@@ -214,6 +269,37 @@ class HASettings:
                     raise ValueError("MQTT topics cannot use wildcards or leading/trailing slashes.")
         return result
 
+    def validate_network(self, result, previous, values):
+        if result["gateway_mac"] != previous["gateway_mac"]:
+            mac = mac_hex(result["gateway_mac"])
+            if mac is None or int(mac[:2], 16) & 1 or mac == "0" * 12:
+                raise ValueError("Enter the gateway MAC as 12 hex digits, for example 02:00:00:00:00:01.")
+            result["gateway_mac"] = mac
+        if result.pop("use_default_key"):
+            if values.get("pairing_key"):
+                raise ValueError("Enter a pairing key or choose the factory default, not both.")
+            result["pairing_key"] = DEFAULT_KEY_HEX
+        key = result["pairing_key"].strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", key):
+            raise ValueError("Enter the pairing key as 64 hex digits (32 bytes).")
+        result["pairing_key"] = key
+        macs = []
+        if result["auto_pair"] == "list":
+            for part in re.split(r"[\s,]+", result["auto_pair_macs"].strip()):
+                mac = mac_hex(part)
+                if mac is None:
+                    raise ValueError(f"{part!r} is not a sensor MAC.")
+                macs.append(mac)
+        result["auto_pair_macs"] = ", ".join(macs)
+        # Paired sensors hold keys bound to this identity; a change orphans them.
+        if result.pop("allow_repair"):
+            return
+        if (result["gateway_mac"], key) != (previous["gateway_mac"], previous["pairing_key"]):
+            paired = sum(r.adopted for r in JsonDeviceStore(str(self.root / "devices.json")).load_all())
+            if paired:
+                raise ValueError(f"{paired} paired sensor{'s' if paired > 1 else ''} would need to be paired again. "
+                                 "Choose Allow changes that need sensors to be paired again to continue.")
+
     def save(self, body):
         with self.lock:
             if set(body) != {"section", "values", "revision"}:
@@ -225,7 +311,8 @@ class HASettings:
             base, doc = self.base(), self.read()
             section = body["section"]
             values = self.validate(section, body["values"])
-            if not base and not doc.get("gateway_mac") and records:
+            restoring = (doc.get("network") or {}).get("gateway_mac") or (section == "network" and values["gateway_mac"])
+            if not base and not doc.get("gateway_mac") and records and not restoring:
                 raise ValueError("Restore the original gateway configuration before changing settings.")
             if section == "radio":
                 if not base and not doc.get("gateway_mac"):
@@ -269,16 +356,24 @@ def prepare(root, options_path, get_mqtt=mqtt_service):
             continue
         if tcp and name != "bridge.yaml":
             continue
-        if name == "bridge.yaml" and doc.get("gateway_mac"):
+        if name == "bridge.yaml" and (doc.get("gateway_mac") or (doc.get("network") or {}).get("gateway_mac")):
             continue
         if not (root / name).is_file():
             missing.append(name)
     if missing:
         return None, missing
     try:
-        config = copy.deepcopy(settings.base()) or {"gw_mac": doc["gateway_mac"], "adopt": []}
-    except (ValueError, KeyError):
+        config = copy.deepcopy(settings.base()) or {"gw_mac": doc.get("gateway_mac"), "adopt": []}
+    except ValueError:
         return None, ["bridge.yaml"]
+    network = doc.get("network")
+    if network:  # only once saved: an untouched section leaves today's config as is
+        config["gw_mac"] = network["gateway_mac"] or config["gw_mac"]
+        config["pairing_key"] = network["pairing_key"]
+        config["adopt"] = {"manual": [], "all": "all", "list": network["auto_pair_macs"].split(", ")}[network["auto_pair"]]
+        config["log"] = {**(config.get("log") or {}), "level": network["log_level"]}
+        for name in ("invert_iq", "downlink_delay_us", "burst_spacing_us", "link_lost_timeout", "watchdog_timeout", "watchdog_short_challenge_k"):
+            config[name] = network[name]
     config["radio"] = {"host": options.get("radio_host", ""), "username": options.get("radio_user", "pi"),
                        "port": options.get("radio_port", 22), "key_file": str(root / "radio_ed25519"),
                        "known_hosts": str(root / "known_hosts")}

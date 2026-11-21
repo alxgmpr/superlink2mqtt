@@ -6,9 +6,10 @@ from pathlib import Path
 
 import paramiko
 import pytest
+import yaml
 
 from superlink.bridge.ha_settings import HASettings, prepare
-from superlink.bridge.config import WebConfig
+from superlink.bridge.config import ADOPT_ALL, DEFAULT_PAIRING_KEY, RuntimeConfig, WebConfig
 from superlink.bridge.web import ManagementServer
 from superlink.bridge.store import DeviceRecord, JsonDeviceStore
 from tests.test_ha_setup import startup
@@ -201,3 +202,113 @@ def test_settings_read_does_not_create_keys_or_identity(settings):
     state = settings.snapshot()
     assert state['public_key'] == ''
     assert sorted(settings.root.iterdir()) == before
+
+
+def ready(settings, radio):
+    save(settings, 'radio', radio)
+    save(settings, 'mqtt', {'mode':'custom', 'host':'broker.invalid'})
+
+
+def test_untouched_network_section_keeps_todays_config(settings, radio):
+    ready(settings, radio)
+    config, missing = prepare(settings.root, settings.options_path)
+    assert not missing
+    for name in ('pairing_key','invert_iq','downlink_delay_us','log','link_lost_timeout'):
+        assert name not in config
+    assert config['adopt'] == []
+    # Saving the shown defaults unchanged is behaviourally identical.
+    shown = settings.snapshot()['values']['network']
+    save(settings, 'network', shown)
+    config, _ = prepare(settings.root, settings.options_path)
+    loaded = RuntimeConfig.load(_write(settings.root, config))
+    default = RuntimeConfig(gw_mac=loaded.gw_mac)
+    for name in ('pairing_key','adopt','downlink_delay_us','burst_spacing_us','invert_iq','log_level',
+                 'link_lost_timeout','watchdog_timeout','watchdog_short_challenge_k'):
+        assert getattr(loaded, name) == getattr(default, name), name
+
+
+def _write(root, config):
+    path = root / 'runtime.yaml'
+    config.pop('web')  # the token comes from the launcher's environment
+    path.write_text(yaml.safe_dump(config))
+    return str(path)
+
+
+def test_network_overrides_reach_runtime_config(settings, radio):
+    ready(settings, radio)
+    key = 'ab' * 32
+    save(settings, 'network', {'gateway_mac':'02:11:22:33:44:55', 'pairing_key':key.upper(), 'auto_pair':'list',
+                               'auto_pair_macs':'AA:BB:CC:DD:EE:01,  aabbccddee02', 'log_level':'DEBUG',
+                               'invert_iq':True, 'downlink_delay_us':900000, 'watchdog_timeout':0})
+    config, missing = prepare(settings.root, settings.options_path)
+    loaded = RuntimeConfig.load(_write(settings.root, config))
+    assert not missing and loaded.gw_mac.hex() == '021122334455' and loaded.pairing_key == bytes.fromhex(key)
+    assert loaded.adopt == {bytes.fromhex('aabbccddee01'), bytes.fromhex('aabbccddee02')}
+    assert loaded.log_level == 'DEBUG' and loaded.invert_iq and loaded.downlink_delay_us == 900000
+    assert loaded.watchdog_timeout == 0
+    save(settings, 'network', {'auto_pair':'all', 'use_default_key':True})
+    loaded = RuntimeConfig.load(_write(settings.root, prepare(settings.root, settings.options_path)[0]))
+    assert loaded.adopt is ADOPT_ALL and loaded.pairing_key == DEFAULT_PAIRING_KEY
+
+
+def test_pairing_key_never_returned_and_blank_keeps_it(settings, radio):
+    ready(settings, radio)
+    assert settings.snapshot()['pairing_key_set'] is False
+    key = os.urandom(32).hex()
+    result = save(settings, 'network', {'pairing_key':key})
+    assert result['pairing_key_set'] and key not in json.dumps(result)
+    assert 'pairing_key' not in result['values']['network']
+    save(settings, 'network', {'pairing_key':'', 'log_level':'WARNING'})
+    assert settings.read()['network']['pairing_key'] == key
+    with pytest.raises(ValueError, match='not both'):
+        save(settings, 'network', {'pairing_key':key, 'use_default_key':True})
+
+
+@pytest.mark.parametrize('patch', [{'pairing_key':'ab'*31}, {'pairing_key':'zz'*32}, {'gateway_mac':''},
+                                    {'gateway_mac':'01:00:00:00:00:01'}, {'gateway_mac':'0200000000'},
+                                    {'auto_pair':'list', 'auto_pair_macs':''}, {'auto_pair':'list', 'auto_pair_macs':'aa:bb'},
+                                    {'auto_pair':'some'}, {'log_level':'TRACE'}, {'downlink_delay_us':-1},
+                                    {'link_lost_timeout':5}, {'invert_iq':'yes'}, {'csv_path':'/tmp/x'}])
+def test_invalid_network_is_rejected_without_writes(settings, radio, patch):
+    ready(settings, radio)
+    before = settings.path.read_bytes()
+    with pytest.raises(ValueError):
+        save(settings, 'network', patch)
+    assert settings.path.read_bytes() == before
+
+
+def test_identity_change_with_paired_sensors_needs_acknowledgement(settings, radio):
+    ready(settings, radio)
+    JsonDeviceStore(str(settings.root/'devices.json')).save(DeviceRecord(mac=b'\x02'*6, adopted=True))
+    save(settings, 'network', {'log_level':'DEBUG'})  # unrelated changes are fine
+    for patch in ({'pairing_key':'cd'*32}, {'gateway_mac':'020000000077'}):
+        with pytest.raises(ValueError, match='paired again'):
+            save(settings, 'network', patch)
+        save(settings, 'network', {**patch, 'allow_repair':True})
+    stored = settings.read()['network']
+    assert stored['gateway_mac'] == '020000000077' and 'allow_repair' not in stored and 'use_default_key' not in stored
+
+
+def test_network_mac_restores_identity_without_bridge_yaml(settings, radio):
+    JsonDeviceStore(str(settings.root/'devices.json')).save(DeviceRecord(mac=b'\x02'*6, adopted=True))
+    with pytest.raises(ValueError, match='original gateway'):
+        save(settings, 'radio', radio)
+    save(settings, 'network', {'gateway_mac':'02aabbccddee', 'allow_repair':True})
+    ready(settings, radio)
+    config, missing = prepare(settings.root, settings.options_path)
+    assert not missing and config['gw_mac'] == '02aabbccddee'
+
+
+def test_existing_bridge_yaml_values_are_shown_and_kept(settings, radio):
+    save(settings, 'radio', radio)
+    (settings.root/'bridge.yaml').write_text('gw_mac: "020000000099"\nadopt: all\npairing_key: ' + 'ef'*32 +
+                                             '\ninvert_iq: true\nlog:\n  level: DEBUG\n  csv: /config/frames.csv\n')
+    snapshot = settings.snapshot()
+    network = snapshot['values']['network']
+    assert network['gateway_mac'] == '020000000099' and network['auto_pair'] == 'all' and network['invert_iq']
+    assert snapshot['pairing_key_set'] and network['log_level'] == 'DEBUG'
+    save(settings, 'network', {'log_level':'INFO'})
+    save(settings, 'mqtt', {'mode':'custom', 'host':'broker.invalid'})
+    config, _ = prepare(settings.root, settings.options_path)
+    assert config['pairing_key'] == 'ef'*32 and config['adopt'] == 'all' and config['gw_mac'] == '020000000099'
+    assert config['log'] == {'level':'INFO', 'csv':'/config/frames.csv'}
