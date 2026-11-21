@@ -1,0 +1,18 @@
+# SuperLink radio over TCP. Install on the Pi that owns the SX1302:
+#   sudo cp superlink-radio.service /etc/systemd/system/
+#   sudo systemctl enable --now superlink-radio
+# Replace `pi` and the paths with your account, venv and checkout.
+[Unit]
+Description=SuperLink SX1302 radio (TCP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/superlink
+ExecStart=/home/pi/superlink-venv/bin/python -m superlink.radio_server --listen 0.0.0.0:8572
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

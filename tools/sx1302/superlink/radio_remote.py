@@ -1,11 +1,17 @@
-"""SX1302 HAL over a pinned SSH connection; no sensor keys live on the Pi."""
-from dataclasses import dataclass
+"""SX1302 HAL over a pinned SSH connection or a token-authenticated TCP socket.
+
+No sensor keys live on the Pi."""
+from dataclasses import dataclass, field
+import hmac
 import json
+import secrets
+import socket
 import threading
 
 import paramiko
 
 from .hal import RxPacket, BW_500KHZ
+from .radio_server import DEFAULT_PORT, auth_proof
 
 MAX_MESSAGE = 65536
 PROTOCOL = 1
@@ -27,7 +33,26 @@ class RemoteRadioConfig:
             raise ValueError("radio.port must be between 1 and 65535")
 
 
+@dataclass
+class TcpRadioConfig:
+    host: str
+    token: str = field(repr=False)
+    port: int = DEFAULT_PORT
+
+    backend = "sx1302-tcp"
+
+    def __post_init__(self):
+        if not isinstance(self.host, str) or not self.host:
+            raise ValueError("radio.tcp.host is required")
+        if not isinstance(self.token, str) or len(self.token) < 32:
+            raise ValueError("radio.tcp.token must be at least 32 characters")
+        if type(self.port) is not int or not 1 <= self.port <= 65535:
+            raise ValueError("radio.tcp.port must be between 1 and 65535")
+
+
 class RemoteSX1302:
+    transport = "SSH"
+
     def __init__(self, config):
         self.config = config
         self.client = None
@@ -54,14 +79,17 @@ class RemoteSX1302:
             # Native HAL diagnostics go to stderr, never into the wire protocol.
             threading.Thread(target=self._drain_stderr, args=(self.channel,),
                              daemon=True, name="radio-stderr").start()
-            result = self._rpc({"op": "start", "protocol": PROTOCOL})
-            if result.get("protocol") != PROTOCOL:
-                raise ConnectionError("Unsupported radio bridge protocol")
-            self._version = result["version"]
-            self.channel.settimeout(5)
+            self._handshake()
         except Exception:
             self.stop()
             raise
+
+    def _handshake(self):
+        result = self._rpc({"op": "start", "protocol": PROTOCOL})
+        if result.get("protocol") != PROTOCOL:
+            raise ConnectionError("Unsupported radio bridge protocol")
+        self._version = result["version"]
+        self.channel.settimeout(5)
 
     @staticmethod
     def _drain_stderr(channel):
@@ -112,7 +140,7 @@ class RemoteSX1302:
                    "invert_pol": invert_pol})
 
     def version(self):
-        return f"SSH / {self._version}"
+        return f"{self.transport} / {self._version}"
 
     def stop(self):
         if self.channel is not None:
@@ -122,3 +150,35 @@ class RemoteSX1302:
         if self.client is not None:
             self.client.close()
         self.channel = self.reader = self.client = None
+
+
+class TcpSX1302(RemoteSX1302):
+    """Same JSON-lines protocol, straight to `radio_server --listen`."""
+    transport = "TCP"
+
+    def start(self):
+        cfg = self.config
+        try:
+            self.channel = socket.create_connection((cfg.host, cfg.port), timeout=10)
+            # One small request per poll: Nagle would stall each by ~40 ms.
+            self.channel.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.channel.settimeout(20)
+            self.reader = self.channel.makefile("rb")
+            try:
+                theirs = json.loads(self.reader.readline(1024))["nonce"]
+                ours = secrets.token_hex(16)
+                self.channel.sendall(json.dumps({
+                    "nonce": ours,
+                    "proof": auth_proof(cfg.token, "client", theirs, ours)}).encode() + b"\n")
+                # The server just closes on a wrong token, so this read fails.
+                proof = json.loads(self.reader.readline(1024))["proof"]
+                expected = auth_proof(cfg.token, "server", theirs, ours)
+                if not (isinstance(proof, str)
+                        and hmac.compare_digest(proof.encode(), expected.encode())):
+                    raise ValueError()
+            except (ValueError, KeyError, TypeError):
+                raise ConnectionError("Radio authentication failed; check the access token") from None
+            self._handshake()
+        except Exception:
+            self.stop()
+            raise

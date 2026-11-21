@@ -137,7 +137,7 @@ class SettingsForm {
       const value = snapshot.values[this.section][field.name];
       if (field.type === "checkbox") this.inputs[field.name].checked = !!value;
       else this.inputs[field.name].value = value ?? "";
-      if (field.type === "password") this.inputs[field.name].placeholder = snapshot.password_set ? "Saved · leave blank to keep" : "Optional";
+      if (field.type === "password") this.inputs[field.name].placeholder = (field.name === "token" ? snapshot.token_set : snapshot.password_set) ? "Saved · leave blank to keep" : field.name === "token" ? "" : "Optional";
     }
     this.key.value = snapshot.public_key || "";
     this.keyDetails.hidden = !snapshot.public_key;

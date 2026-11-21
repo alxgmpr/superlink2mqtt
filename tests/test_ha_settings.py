@@ -78,6 +78,25 @@ def test_password_never_returned_and_blank_preserves_saved_secret(settings):
     assert secret not in json.dumps(settings.snapshot())
 
 
+def test_tcp_radio_needs_only_a_token_and_never_returns_it(settings, radio):
+    token = 'test-radio-token-never-a-real-secret-123'
+    tcp = {'transport':'tcp', 'host':'pi.invalid', 'port':8572}
+    with pytest.raises(ValueError, match='access token'):
+        save(settings, 'radio', {**tcp, 'token':'short'})
+    result = save(settings, 'radio', {**tcp, 'token':token + '  '})
+    assert result['changed'] and result['token_set'] and result['public_key'] == ''
+    assert token not in json.dumps(result)
+    assert not (settings.root / 'radio_ed25519').exists()
+    # A blank token keeps the saved one.
+    save(settings, 'radio', {**tcp, 'port':9000, 'token':''})
+    save(settings, 'mqtt', {'mode':'custom', 'host':'broker.invalid', 'port':1883})
+    config, missing = prepare(settings.root, settings.options_path)
+    assert missing == []
+    assert config['radio'] == {'tcp': {'host':'pi.invalid', 'port':9000, 'token':token}}
+    # Switching back to SSH is a normal save.
+    assert save(settings, 'radio', {**radio, 'transport':'ssh'})['public_key'].startswith('ssh-ed25519 ')
+
+
 @pytest.mark.parametrize('patch', [{'port':0},{'port':True},{'host':'ssh://bad'},{'host':'bad\nhost'},
                                     {'username':'-command'}, {'host_key':'not a key'}, {'key_file':'/etc/passwd'}])
 def test_invalid_radio_is_rejected_without_writes(settings, radio, patch):

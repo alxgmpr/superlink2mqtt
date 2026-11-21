@@ -7,7 +7,7 @@ import yaml
 
 if TYPE_CHECKING:
     from ..radio_gwmp import GwmpRadioConfig
-    from ..radio_remote import RemoteRadioConfig
+    from ..radio_remote import RemoteRadioConfig, TcpRadioConfig
 
 # Documented Ubiquiti factory-default pairing key (docs/protocol/crypto_and_pairing.md).
 DEFAULT_PAIRING_KEY = bytes.fromhex(
@@ -61,7 +61,7 @@ class RuntimeConfig:
     mqtt: "MqttConfig | None" = None
     control_socket: str | None = None
     web: WebConfig | None = None
-    radio: RemoteRadioConfig | GwmpRadioConfig | None = None
+    radio: RemoteRadioConfig | TcpRadioConfig | GwmpRadioConfig | None = None
     hal_library: str = field(default_factory=lambda: os.path.expanduser(
         "~/sx1302_hal/libloragw/libloragw.so"))
     spi_path: str = "/dev/spidev0.0"
@@ -121,6 +121,11 @@ class RuntimeConfig:
                 raise ValueError("radio.gwmp cannot be combined with SSH radio settings")
             from ..radio_gwmp import GwmpRadioConfig
             radio = GwmpRadioConfig(**(radio_doc["gwmp"] or {}))
+        elif isinstance(radio_doc, dict) and "tcp" in radio_doc:
+            if len(radio_doc) != 1:
+                raise ValueError("radio.tcp cannot be combined with SSH radio settings")
+            from ..radio_remote import TcpRadioConfig
+            radio = TcpRadioConfig(**(radio_doc["tcp"] or {}))
         elif radio_doc is not None:
             from ..radio_remote import RemoteRadioConfig
             radio = RemoteRadioConfig(**radio_doc)

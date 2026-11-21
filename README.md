@@ -127,6 +127,8 @@ The bridge runs in a container on Home Assistant OS, with its UI in the HA sideb
    restrict,command="/home/your-user/superlink-radio/run" ssh-ed25519 AAAA...
    ```
 
+   Prefer a plain TCP port to SSH? Run the Pi's radio server as a service and connect with an access token instead of steps 2–4: see [TCP instead of SSH](homeassistant/superlink2mqtt/DOCS.md#tcp-instead-of-ssh).
+
 5. In the MQTT form choose the Home Assistant broker (or enter a custom one). **Gateway** should show *Radio connection: connected* and *MQTT: connected*.
 
 Full walkthrough, manual provisioning and troubleshooting: [homeassistant/superlink2mqtt/DOCS.md](homeassistant/superlink2mqtt/DOCS.md).

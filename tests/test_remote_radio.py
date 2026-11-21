@@ -8,8 +8,8 @@ import paramiko
 import pytest
 
 from superlink.hal import RxPacket, BW_500KHZ
-from superlink.radio_remote import RemoteRadioConfig, RemoteSX1302
-from superlink.radio_server import serve, dispatch
+from superlink.radio_remote import RemoteRadioConfig, RemoteSX1302, TcpRadioConfig, TcpSX1302
+from superlink.radio_server import serve, dispatch, listen
 
 
 class Radio:
@@ -128,3 +128,85 @@ def test_ssh_uses_pinned_host_and_dedicated_key(tmp_path, monkeypatch):
     assert calls["key_filename"] == str(tmp_path / "key")
     assert calls["allow_agent"] is calls["look_for_keys"] is False
     assert calls["closed"]
+
+
+TOKEN = "test-radio-token-never-a-real-secret-123"
+
+
+@pytest.fixture
+def tcp_radio(tmp_path, monkeypatch):
+    """A real `--listen` loop on loopback in front of fake radios."""
+    monkeypatch.setenv("HOME", str(tmp_path))  # the single-owner lock file
+    radios = []
+
+    def factory():
+        radios.append(Radio())
+        return radios[-1]
+
+    def run():
+        try:
+            listen(server, TOKEN, factory)
+        except OSError:
+            pass  # server closed at teardown
+
+    server = socket.create_server(("127.0.0.1", 0))
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    yield server.getsockname()[1], radios
+    server.close()
+    thread.join(3)
+
+
+def test_tcp_roundtrip_and_reconnect_after_drop(tcp_radio):
+    port, radios = tcp_radio
+    for attempt in range(2):  # the listener must take a new controller after a drop
+        client = TcpSX1302(TcpRadioConfig("127.0.0.1", TOKEN, port))
+        client.start()
+        try:
+            assert client.version() == "TCP / test-hal"
+            packet = RxPacket(915600000, 3, 1, -51.5, 7.25, True, b"\x01\x02", 42, 5, 4, 1)
+            radios[attempt].packets = [packet]
+            assert client.receive() == [packet]
+            client.send(920400000, b"\x00\xff", tx_timestamp_us=1000042)
+            assert radios[attempt].sent[0][0] == (920400000, b"\x00\xff")
+        finally:
+            client.stop()
+    assert len(radios) == 2 and radios[0].started
+
+
+@pytest.mark.parametrize("token", ["wrong-radio-token-never-a-real-secret-12", TOKEN + "x"])
+def test_tcp_wrong_token_never_reaches_the_radio(tcp_radio, token):
+    port, radios = tcp_radio
+    client = TcpSX1302(TcpRadioConfig("127.0.0.1", token, port))
+    with pytest.raises(ConnectionError, match="access token"):
+        client.start()
+    assert radios == [] and client.channel is None
+
+
+def test_tcp_client_rejects_a_listener_without_the_token(tmp_path):
+    """A host answering on the radio port must prove the token too."""
+    server = socket.create_server(("127.0.0.1", 0))
+
+    def impostor():
+        conn, _ = server.accept()
+        with conn:
+            conn.sendall(b'{"nonce": "abc"}\n')
+            conn.makefile("rb").readline()
+            conn.sendall(b'{"proof": "' + b"0" * 64 + b'"}\n')
+
+    thread = threading.Thread(target=impostor, daemon=True)
+    thread.start()
+    client = TcpSX1302(TcpRadioConfig("127.0.0.1", TOKEN, server.getsockname()[1]))
+    try:
+        with pytest.raises(ConnectionError, match="access token"):
+            client.start()
+    finally:
+        thread.join(3)
+        server.close()
+
+
+def test_tcp_config_validates_and_hides_token():
+    assert TOKEN not in repr(TcpRadioConfig("pi.local", TOKEN))
+    for bad in ({"host": ""}, {"token": "short"}, {"port": 0}):
+        with pytest.raises(ValueError):
+            TcpRadioConfig(**{"host": "pi.local", "token": TOKEN, **bad})

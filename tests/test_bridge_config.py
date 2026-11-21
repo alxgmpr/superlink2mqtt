@@ -101,3 +101,16 @@ radio:
     assert c.radio.host == "192.0.2.1"
     assert c.radio.port == 22
     assert RuntimeConfig.load(_write(tmp_path, YAML_ALL)).radio is None
+
+
+def test_tcp_radio_configuration(tmp_path):
+    token = "test-radio-token-never-a-real-secret-123"
+    c = RuntimeConfig.load(_write(tmp_path, YAML_ALL + f"""
+radio:
+  tcp:
+    host: 192.0.2.1
+    token: {token}
+"""))
+    assert (c.radio.backend, c.radio.host, c.radio.port) == ("sx1302-tcp", "192.0.2.1", 8572)
+    with pytest.raises(ValueError):
+        RuntimeConfig.load(_write(tmp_path, YAML_ALL + "\nradio:\n  tcp: {host: a, token: short}\n  host: b\n"))

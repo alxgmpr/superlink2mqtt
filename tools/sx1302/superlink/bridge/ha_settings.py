@@ -21,11 +21,15 @@ from .store import JsonDeviceStore
 # One field definition drives both embedded forms and server-side validation.
 FIELDS = {
     "radio": [
+        {"name": "transport", "label": "Connection", "type": "select", "choices": [["ssh", "SSH"], ["tcp", "TCP with access token"]]},
         {"name": "host", "label": "Pi address", "required": True, "placeholder": "192.168.1.50"},
-        {"name": "username", "label": "Pi account", "required": True},
-        {"name": "port", "label": "SSH port", "type": "number", "min": 1, "max": 65535, "required": True},
-        {"name": "host_key", "label": "Pi host public key", "required": True,
+        {"name": "username", "label": "Pi account", "required": True, "when": {"transport": "ssh"}},
+        {"name": "port", "label": "Port", "type": "number", "min": 1, "max": 65535, "required": True,
+         "help": "SSH: usually 22. TCP: the radio service port, 8572 by default."},
+        {"name": "host_key", "label": "Pi host public key", "required": True, "when": {"transport": "ssh"},
          "placeholder": "ssh-ed25519 AAAA…", "help": "On your Pi: cat /etc/ssh/ssh_host_ed25519_key.pub"},
+        {"name": "token", "label": "Radio access token", "type": "password", "when": {"transport": "tcp"},
+         "help": "On your Pi: cat ~/.superlink-radio.token. Leave blank to keep the saved token."},
     ],
     "mqtt": [
         {"name": "mode", "label": "Broker", "type": "select", "choices": [["automatic", "Home Assistant broker"], ["custom", "Custom broker"]]},
@@ -111,8 +115,8 @@ class HASettings:
     def values(self):
         doc, base = self.read(), self.base()
         options = json.loads(self.options_path.read_text())
-        radio = {"host": options.get("radio_host", ""), "username": options.get("radio_user", "pi"),
-                 "port": options.get("radio_port", 22), "host_key": ""}
+        radio = {"transport": "ssh", "host": options.get("radio_host", ""), "username": options.get("radio_user", "pi"),
+                 "port": options.get("radio_port", 22), "host_key": "", "token": ""}
         radio.update(doc.get("radio", {}))
         if not radio["host_key"] and (self.root / "known_hosts").is_file():
             try:
@@ -143,16 +147,17 @@ class HASettings:
         with self.lock:
             values = self.values()
             password_set = bool(values["mqtt"].pop("password", ""))
+            token_set = bool(values["radio"].pop("token", ""))
             public_key = ""
             key_path = self.root / "radio_ed25519"
-            if key_path.is_file():
+            if key_path.is_file() and values["radio"]["transport"] == "ssh":
                 try:
                     key = paramiko.Ed25519Key.from_private_key_file(str(key_path))
                     public_key = f"{key.get_name()} {key.get_base64()} superlink-radio"
                 except (OSError, ValueError, paramiko.SSHException):
                     pass
             return {"fields": FIELDS, "values": values, "revision": self.revision(),
-                    "public_key": public_key, "password_set": password_set}
+                    "public_key": public_key, "password_set": password_set, "token_set": token_set}
 
     def validate(self, section, values):
         if not isinstance(section, str) or section not in FIELDS or not isinstance(values, dict):
@@ -179,7 +184,7 @@ class HASettings:
                     valid = value in [c[0] for c in field["choices"]]
             if not valid:
                 raise ValueError(f'Check {field["label"].lower()}.')
-            if name != "password" or value:
+            if kind != "password" or value:
                 result[name] = value
         for field in FIELDS[section]:
             active = all(result.get(k) == v for k, v in field.get("when", {}).items())
@@ -188,7 +193,11 @@ class HASettings:
         if section == "radio" or result["mode"] == "custom":
             if not re.fullmatch(r"[A-Za-z0-9_.:%-]+", result["host"]):
                 raise ValueError("Enter a hostname or IP address without a scheme or path.")
-        if section == "radio":
+        if section == "radio" and result["transport"] == "tcp":
+            result["token"] = result["token"].strip()  # pasted from `cat`
+            if len(result["token"]) < 32 or len(result["token"]) > 255:
+                raise ValueError("Enter the radio access token from your Pi (32 to 255 characters).")
+        elif section == "radio":
             if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.-]*[$]?", result["username"]):
                 raise ValueError("Enter a valid Pi account name.")
             result["host_key"] = host_key(result["host_key"])
@@ -223,7 +232,7 @@ class HASettings:
                     mac = bytearray(secrets.token_bytes(6)); mac[0] = (mac[0] | 2) & 254
                     doc["gateway_mac"] = mac.hex()
                 key_path = self.root / "radio_ed25519"
-                if not key_path.exists():
+                if values["transport"] == "ssh" and not key_path.exists():
                     key = Ed25519PrivateKey.generate()
                     data = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH, serialization.NoEncryption())
                     # Exclusive creation: existing operator credentials are never replaced.
@@ -251,11 +260,14 @@ def prepare(root, options_path, get_mqtt=mqtt_service):
     doc = settings.read()
     options = json.loads(Path(options_path).read_text())
     radio = doc.get("radio")
+    tcp = (radio or {}).get("transport") == "tcp"
     missing = []
     if not (radio or {}).get("host", options.get("radio_host")):
         missing.append("radio_host")
     for name in ("radio_ed25519", "known_hosts", "bridge.yaml"):
         if name == "known_hosts" and radio and radio.get("host_key"):
+            continue
+        if tcp and name != "bridge.yaml":
             continue
         if name == "bridge.yaml" and doc.get("gateway_mac"):
             continue
@@ -270,7 +282,9 @@ def prepare(root, options_path, get_mqtt=mqtt_service):
     config["radio"] = {"host": options.get("radio_host", ""), "username": options.get("radio_user", "pi"),
                        "port": options.get("radio_port", 22), "key_file": str(root / "radio_ed25519"),
                        "known_hosts": str(root / "known_hosts")}
-    if radio:
+    if tcp:
+        config["radio"] = {"tcp": {k: radio[k] for k in ("host", "port", "token")}}
+    elif radio:
         config["radio"].update({k: radio[k] for k in ("host", "username", "port")})
         name = radio["host"] if radio["port"] == 22 else f'[{radio["host"]}]:{radio["port"]}'
         pinned = root / "radio_known_hosts"

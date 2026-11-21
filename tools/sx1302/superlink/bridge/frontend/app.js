@@ -353,7 +353,7 @@ function renderActivity() {
 }
 
 function renderGateway() {
-  const backend = state.demo ? "SX1302 (demo)" : state.backend === "sx1302-ssh" ? "SX1302 over SSH" : state.backend === "sx1302-gwmp" ? "SX1302 via UDP packet forwarder" : "SX1302";
+  const backend = state.demo ? "SX1302 (demo)" : state.backend === "sx1302-ssh" ? "SX1302 over SSH" : state.backend === "sx1302-tcp" ? "SX1302 over TCP" : state.backend === "sx1302-gwmp" ? "SX1302 via UDP packet forwarder" : "SX1302";
   const radio = state.radio?.state || "unknown";
   const paired = state.devices.filter((d) => d.adopted).length;
   const live = state.devices.filter(online).length;
@@ -383,7 +383,7 @@ function status(value, dots, fallback = "error") {
 function settingsSummary() {
   const r = settingsForms.radio?.values(), m = settingsForms.mqtt?.values();
   return {
-    radio: r ? `${r.username}@${r.host}${r.port === 22 ? "" : `:${r.port}`}` : "",
+    radio: !r ? "" : r.transport === "tcp" ? `${r.host}:${r.port}` : `${r.username}@${r.host}${r.port === 22 ? "" : `:${r.port}`}`,
     mqtt: !m ? "" : m.mode === "automatic" ? "Home Assistant broker" : `${m.host}:${m.port}${m.tls ? " · TLS" : ""}`,
   };
 }

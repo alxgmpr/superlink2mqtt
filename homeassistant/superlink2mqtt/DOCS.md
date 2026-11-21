@@ -48,6 +48,41 @@ SuperLink sensors ↔ Pi / SX1302 ↔ superlink2mqtt → MQTT broker → Home As
 5. Allow Home Assistant to reach this Pi on its configured SSH port. Stop any
    previous sniffer/gateway process using the SX1302; only one process may own it.
 
+### TCP instead of SSH
+
+The radio can also be reached over a plain TCP port, with no SSH account, key or
+host key. The Pi runs the radio server as a service; the app connects to it.
+
+1. On the Pi, create the access token:
+
+   ```bash
+   (umask 077; python3 -c "import secrets; print(secrets.token_urlsafe(32))" > ~/.superlink-radio.token)
+   ```
+
+2. Install `tools/sx1302/superlink-radio.service` (edit the account and paths
+   first), then `sudo systemctl enable --now superlink-radio`. It listens on
+   port 8572.
+3. Allow only Home Assistant to reach that port on the Pi.
+4. In the Radio form choose **TCP with access token**, enter the Pi address,
+   port 8572 and the token from `cat ~/.superlink-radio.token`.
+
+Both ends prove they hold the token when the connection opens. The traffic is
+not encrypted and later messages are not individually authenticated, so use it
+on a network you trust and keep the firewall rule; use SSH or a VPN across
+anything else. Sensor payloads are encrypted by the SuperLink protocol either
+way. The SSH wrapper and the service can stay installed side by side: whichever
+connects first owns the radio.
+
+For a standalone bridge the same connection is:
+
+```yaml
+radio:
+  tcp:
+    host: 192.168.1.50
+    port: 8572          # default
+    token: "<contents of ~/.superlink-radio.token>"
+```
+
 ## Configure in the app
 
 The walkthrough embeds the same Radio and MQTT forms available in **Gateway**.
