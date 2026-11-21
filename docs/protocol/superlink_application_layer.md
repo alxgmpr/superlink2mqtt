@@ -136,11 +136,17 @@ Thread locks. A newer `LED_PATTERN` property (id 61: `NONE=0`, `LOCATE=1`,
 `PIN_FAIL=2`) is used for keypads; usl-entry fw 1.2.0 does not advertise it and
 answers `PROPERTY_SET 61=0` with status 1 (hardware, 2026-11-13).
 
-superlink2mqtt's Start locate sets `REPORT_INTERVAL` to 5 s and then sends
-`LOCATE`, so a later command reaches the sensor within seconds. Stop locate
-sets `LED_ENABLED` (id 14) to 0, which ends the flashing (hardware,
-2026-11-20). When the sensor's locate timeout has passed (the bridge waits 90 s) it
-sets `LED_ENABLED` back to 1 and restores the interval.
+Locate behaviour on usl-entry fw 1.2.0 (hardware, 2026-11-20/21):
+
+- A second `LOCATE` restarts the ~60 s window; it never stops the flashing.
+- `LED_ENABLED` (id 14) = 0 ends the flashing at once.
+- `LED_ENABLED` = 1 after that resumes the flashing **with no timeout**, even
+  many minutes later. Only a fresh `LOCATE` re-arms the timeout and ends it.
+
+superlink2mqtt's Start locate sets `LED_ENABLED` = 1, `REPORT_INTERVAL` = 5 s
+(so a later command lands within seconds), then sends `LOCATE`. Stop locate
+sets `LED_ENABLED` = 0 and leaves it off until the next Start. After the
+bridge's 90 s window it restores the report interval.
 
 `FACTORY_RESET` unpairs the device. The messageTag MUST be non-zero — a `0700`
 body is silently ignored (no ACK, no reset; verified on hardware 2026-07-25).

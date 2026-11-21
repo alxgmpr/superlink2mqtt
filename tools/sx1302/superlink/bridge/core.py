@@ -79,14 +79,6 @@ class BridgeCore:
         # mac -> messageTag of a LOCATE the sensor has not confirmed yet. Its
         # status reply is when the flashing (and the 60 s clock) starts.
         self._locate_tag: dict[bytes, int] = {}
-        # macs whose LED the bridge switched off to stop a locate, and owes
-        # switching back on once the sensor's locate timeout has passed.
-        self._led_off: set[bytes] = set()
-        # macs sent LED on after a Stop and not yet seen reporting it on. The
-        # sensor's reply to a PROPERTY_SET carries the value from before the
-        # write (hardware, 2026-11-20), so the first reply reads off and the
-        # bridge writes once more; the second reply then reads on.
-        self._led_unconfirmed: set[bytes] = set()
         self._last_uptime: dict[bytes, int] = {}
         self._now = 0.0
         for record in store.load_all():
@@ -192,15 +184,6 @@ class BridgeCore:
         return SetPropertyRaw(mac=mac, property_id=LED_ENABLED_ID, channel=0,
                               raw=bytes([on]))
 
-    def _end_locate(self, mac: bytes) -> list[Action]:
-        """Commands that put a sensor back to normal after a locate."""
-        steps: list[Action] = []
-        if mac in self._led_off:
-            self._led_off.discard(mac)
-            self._led_unconfirmed.add(mac)
-            steps.append(self._led(mac, True))
-        return steps + [self._normal_report_interval(mac)]
-
     def _normal_report_interval(self, mac: bytes) -> SetPropertyRaw:
         """The interval the bridge configured at adoption (profiles.yaml)."""
         for pid, ch, raw in self.profiles.post_adoption(None):
@@ -213,23 +196,19 @@ class BridgeCore:
         mac = action.mac
         if isinstance(action, Locate):
             self._locating[mac] = self._now + LOCATE_DELIVERY_S
-            steps = [self._report_interval(mac, LOCATE_POLL_S), action]
-            if mac in self._led_off:        # restarted after a Stop
-                self._led_off.discard(mac)
-                steps.insert(0, self._led(mac, True))
-            return steps
+            # LED on first: a locate stopped by LED off resumes, untimed,
+            # whenever the LED comes back on; this LOCATE re-arms its ~60 s
+            # timeout (hardware, 2026-11-21).
+            return [self._led(mac, True),
+                    self._report_interval(mac, LOCATE_POLL_S), action]
         if isinstance(action, StopLocate):
-            if mac not in self._locating:
-                log.info("%s is not locating; stop ignored", mac.hex())
-                return []
             # The protocol has no stop message (Protect 7.4.96 sends LOCATE
-            # once and lets it time out) and fw 1.2.0 rejects LED_PATTERN(61).
-            # Disabling the LED ends the flashing (seen on hardware
-            # 2026-11-20). The LED is re-enabled when the sensor's own locate
-            # timeout has passed, in case re-enabling earlier resumes it.
-            # ponytail: a bridge restart inside that minute leaves the LED
-            # disabled; persist _led_off in the device record if it bites.
-            self._led_off.add(mac)
+            # once and lets it time out), fw 1.2.0 rejects LED_PATTERN(61),
+            # and a second LOCATE only restarts the timeout. LED off ends the
+            # flashing, but turning the LED back on resumes it with no
+            # timeout, so the LED stays off until the next Start locate. Sent
+            # even when the bridge thinks the locate is over: the sensor may
+            # still be flashing (hardware, 2026-11-21).
             return [self._led(mac, False)]
         return [action]
 
@@ -242,14 +221,6 @@ class BridgeCore:
                     and self._locate_tag.get(ev.mac) == ev.message_tag):
                 del self._locate_tag[ev.mac]
                 self._locating[ev.mac] = self._now + LOCATE_SECONDS
-            if (isinstance(ev, PropertyEvent) and ev.name == "LED_ENABLED"
-                    and ev.mac in self._led_unconfirmed):
-                if ev.value:
-                    self._led_unconfirmed.discard(ev.mac)
-                else:
-                    log.info("%s kept its LED off; sending LED on again",
-                             ev.mac.hex())
-                    self.submit(self._led(ev.mac, True))
             if not (isinstance(ev, PropertyEvent) and ev.name == "UPTIME"
                     and isinstance(ev.value, int)):
                 continue
@@ -267,8 +238,7 @@ class BridgeCore:
             if now >= until:
                 del self._locating[mac]
                 self._locate_tag.pop(mac, None)
-                for step in self._end_locate(mac):
-                    self.submit(step)
+                self.submit(self._normal_report_interval(mac))
         out: list[OutgoingFrame] = []
         for mac, session in list(self._sessions.items()):
             frames, events = session.tick(now)
