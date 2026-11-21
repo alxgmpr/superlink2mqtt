@@ -1,5 +1,26 @@
 # Home Assistant deployment — 2026-10-13
 
+## Update 2026-11-21: radio moved to TCP on the Radio Bridges VLAN
+
+The sections below describe the original SSH deployment and are kept as a
+record. What changed:
+
+- Pi: now `10.1.12.3` on **Radio Bridges** (VLAN 12, no internet access), same
+  switch port (2.5G Switch port 4, profile *Radio Bridge*), fixed IP, UniFi
+  client name **SuperLink Bridge**. Time comes from `10.1.3.150` with the
+  gateway as fallback (`/etc/systemd/timesyncd.conf.d/lan.conf`).
+- Radio transport: `superlink-radio.service` on the Pi listens on TCP 8572
+  (`python3 -m superlink.radio_server --listen`, token in
+  `~/.superlink-radio.token`). The app's Radio settings use **TCP with access
+  token**. See [TCP instead of SSH](../homeassistant/superlink2mqtt/DOCS.md#tcp-instead-of-ssh).
+- UniFi: address group **SuperLink Radio** (`10.1.12.3`) and two Internal → IoT
+  policies with return traffic: **Allow HA to SuperLink radio** (HA → TCP 8572)
+  and **Allow trusted to SuperLink radio SSH** (Trusted → TCP 22, for admin and
+  deploys). Policy `bb3d3981-…` (**Allow Home Assistant to SuperLink radio
+  SSH**) is deleted.
+- The app's restricted SSH key is removed from the Pi's `authorized_keys`. The
+  wrapper `~/superlink-radio/run` and the app's key pair remain, unused.
+
 ## Running installation
 
 - Home Assistant: `10.1.3.4`, HAOS 18.3, amd64.
