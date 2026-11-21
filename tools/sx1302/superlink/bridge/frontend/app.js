@@ -76,21 +76,38 @@ const demo = () => state?.demo ?? true;
 const radioReady = () => state?.radio?.state === "connected";
 const macLabel = (mac) => mac ? mac.match(/../g).join(":").toUpperCase() : "Not configured";
 const online = (d) => ["active", "adopted"].includes(d.state);
+// Largest two units: 45s, 12m 5s, 17h 19m, 5d 18h.
+function duration(s) {
+  s = Math.max(0, Math.floor(s));
+  const parts = [[86400, "d"], [3600, "h"], [60, "m"], [1, "s"]]
+    .map(([n, u]) => [Math.floor(s / n), u, (s %= n)])
+    .filter(([v]) => v);
+  return parts.length ? parts.slice(0, 2).map(([v, u]) => `${v}${u}`).join(" ") : "0s";
+}
 function age(ts) {
   if (!ts) return "never";
-  const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
-  if (s < 5) return "now";
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  return `${Math.floor(s / 3600)}h ago`;
+  const s = Date.now() / 1000 - ts;
+  return s < 5 ? "now" : `${duration(s).split(" ")[0]} ago`;
 }
+const num = (v, digits = 1) => Number(v).toLocaleString(undefined, { maximumFractionDigits: digits });
+const dbm = (d) => `${num(d.rssi, 0)} dBm`;
 const isBattery = (p) => ["BATTERY", "BATTERY_LEVEL"].includes(p.name);
+// Opaque or derived fields that read as noise in the UI.
+const HIDDEN = new Set(["SIGNAL_RAW", "UPTIME", "BUTTON_PRESSED"]);
+const prop = (d, name) => d.properties.find((p) => p.name === name);
 function format(p) {
-  if (typeof p.value === "boolean") return p.name === "MOTION" ? (p.value ? "Detected" : "Clear") : p.value ? "On" : "Off";
+  if (typeof p.value === "boolean") {
+    if (p.name === "ENTRY_DETECTED") return p.value ? "Open" : "Closed";
+    if (p.name.endsWith("_DETECTED")) return p.value ? "Detected" : "Clear";
+    return p.value ? "On" : "Off";
+  }
   if (typeof p.value === "string") return p.value.charAt(0).toUpperCase() + p.value.slice(1);
-  return `${p.value}${p.unit ? (p.unit === "%" ? "%" : ` ${p.unit}`) : ""}`;
+  if (p.unit === "s") return duration(p.value);
+  if (p.unit === "%") return `${num(p.value)}%`;
+  return `${num(p.value, p.unit === "V" ? 2 : 1)}${p.unit ? ` ${p.unit}` : ""}`;
 }
-const label = (name) => name.charAt(0) + name.slice(1).replaceAll("_", " ").toLowerCase();
+const LABELS = { ENTRY_DETECTED: "Door", BATTERY_VOLTAGE: "Battery voltage", MOTION_DETECTED: "Motion" };
+const label = (name) => LABELS[name] || name.charAt(0) + name.slice(1).replaceAll("_", " ").toLowerCase();
 function deviceIcon(d) {
   const names = d.properties.map((p) => p.name).join(" ");
   const kind = /DOOR|ENTRY/.test(names) ? "door" : /TEMP/.test(names) ? "temp" : "radio";
@@ -251,11 +268,13 @@ function renderDevices() {
     const title = el("div");
     title.append(el("div", d.name, "device-name"), el("div", STATES[d.state] || d.state, "secondary"));
     head.append(deviceIcon(d), title);
-    const reading = d.properties.find((p) => !isBattery(p));
+    // Headline: a state (door/motion/leak) beats a measurement.
+    const shown = d.properties.filter((p) => !HIDDEN.has(p.name) && !isBattery(p) && p.name !== "BATTERY_VOLTAGE");
+    const reading = shown.find((p) => typeof p.value === "boolean") || shown[0];
     const battery = d.properties.find(isBattery);
     const meta = el("div", null, "meta");
-    if (battery) meta.append(chip(`🔋 ${format(battery)}`));
-    if (d.rssi != null) meta.append(chip(`${d.rssi} dBm`));
+    if (battery) meta.append(chip(`Battery ${format(battery)}`));
+    if (d.rssi != null) meta.append(chip(dbm(d)));
     meta.append(chip(age(d.last_seen), online(d) ? "ok" : d.state === "lost" ? "error" : "warn"));
     card.replaceChildren(head, el("div", reading ? format(reading) : "—", "primary-reading"), meta);
     return card;
@@ -316,9 +335,20 @@ function fillDialog() {
   $("d-icon").replaceWith(Object.assign(deviceIcon(d), { id: "d-icon" }));
   $("d-name").textContent = d.name;
   $("d-sub").textContent = `${macLabel(d.mac)} · ${STATES[d.state] || d.state}`;
+  const uptime = prop(d, "UPTIME")?.value;
+  const press = prop(d, "BUTTON_PRESSED")?.value;
+  const volts = prop(d, "BATTERY_VOLTAGE");
   const rows = [
-    ...d.properties.map((p) => [`${label(p.name)}${p.channel > 1 ? ` (ch ${p.channel})` : ""}`, format(p)]),
-    ["Signal", d.rssi == null ? "—" : `${d.rssi} dBm${d.snr == null ? "" : ` · SNR ${d.snr}`}`],
+    ...d.properties
+      .filter((p) => !HIDDEN.has(p.name) && !(volts && p === volts && d.properties.some(isBattery)))
+      .map((p) => [
+        `${label(p.name)}${p.channel > 1 ? ` (ch ${p.channel})` : ""}`,
+        isBattery(p) && volts ? `${format(p)} · ${format(volts)}` : format(p),
+      ]),
+    ["Signal", d.rssi == null ? "—" : `${dbm(d)}${d.snr == null ? "" : ` · SNR ${num(d.snr)} dB`}`],
+    // BUTTON_PRESSED is the sensor uptime at the last press, so age = uptime - it.
+    ...(uptime != null && press != null && press <= uptime ? [["Last button press", `${duration(uptime - press)} ago`]] : []),
+    ...(uptime != null ? [["Uptime", duration(uptime)]] : []),
     ["Firmware", d.firmware || "—"],
     ["Last seen", age(d.last_seen)],
   ];

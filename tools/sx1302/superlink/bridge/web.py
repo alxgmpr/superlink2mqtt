@@ -202,16 +202,19 @@ def run_demo():
     runtime.demo = True
     host = os.environ.get("SUPERLINK_DEMO_HOST", "127.0.0.1")
     web = ManagementServer(runtime, WebConfig(token=token, host=host))
-    for suffix, name, property_name, value, unit in (
-            (1, "Workshop door", "DOOR", "closed", None),
-            (2, "Hallway motion", "MOTION", False, None),
-            (3, "Utility room", "TEMPERATURE", 21.4, "°C")):
+    for suffix, name, props in (
+            (1, "Workshop door", [("ENTRY_DETECTED", False, None), ("UPTIME", 499373, "s"),
+                                  ("SIGNAL_RAW", 25824, None), ("BUTTON_PRESSED", 437005, None),
+                                  ("BATTERY_VOLTAGE", 3.047, "V")]),
+            (2, "Hallway motion", [("MOTION_DETECTED", False, None)]),
+            (3, "Utility room", [("TEMPERATURE", 21.4, "°C")])):
         mac = bytes.fromhex(f"0200000000{suffix:02x}")
         runtime.store.save(DeviceRecord(mac=mac, name=name, adopted=True))
         web.management.on_event(DeviceStateEvent(mac, "active"))
-        web.management.on_event(PropertyEvent(mac, 1, property_name, 0, b"", value, unit, True))
+        for property_name, value, unit in props:
+            web.management.on_event(PropertyEvent(mac, 1, property_name, 0, b"", value, unit, True))
         web.management.on_event(PropertyEvent(mac, 2, "BATTERY", 0, b"", 96 - suffix * 7, "%", True))
-        web.management.on_event(LinkSignal(mac, -54 - suffix * 5, 8))
+        web.management.on_event(LinkSignal(mac, -29.399993896484375 - suffix * 5, 9.25))
     print(f"Demo: http://127.0.0.1:8099\nAccess token: {token}", flush=True)
     web.start()
     previous_sigterm = signal.signal(signal.SIGTERM, lambda *_: runtime.stop())

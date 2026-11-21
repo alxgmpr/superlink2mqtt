@@ -423,7 +423,18 @@ dialog .list > li {
 }
 dialog .card-actions {
   flex-wrap: wrap;
-  padding: 8px 16px;
+  justify-content: flex-start;
+  padding: 8px 16px 16px;
+}
+dialog .card-actions .secondary {
+  flex-basis: 100%;
+  padding: 4px 8px;
+}
+dialog .card-actions .danger {
+  margin-left: auto;
+}
+.list .value {
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 600px) {
